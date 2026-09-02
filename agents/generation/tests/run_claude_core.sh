@@ -505,16 +505,18 @@ export RETHLAS_CLAUDE_PINNED_PYTHON_SHA256="$python_runtime_sha256"
 # Bind every durable root epoch to the exact launcher bytes that established
 # it. A later launcher deployment may take over explicitly, but it cannot
 # silently resume an old root or already-prepared detached work.
+# Darwin's /dev/fd entries duplicate the same open-file description. Pass the
+# held descriptor itself and use positional reads so neither reopening nor
+# digesting it can depend on, or advance, Bash's script-parser offset.
 if ! root_launcher_sha256="$({
-  "$PYTHON_BIN" -I -S -B - "$root_launcher_image_path" <<'PY'
+  "$PYTHON_BIN" -I -S -B - "$root_launcher_image_fd" <<'PY'
 import hashlib
 import os
-import pathlib
 import stat
 import sys
 
-path = pathlib.Path(sys.argv[1])
-before = path.stat()
+descriptor = int(sys.argv[1])
+before = os.fstat(descriptor)
 if (
     not stat.S_ISREG(before.st_mode)
     or before.st_uid not in {0, os.geteuid()}
@@ -523,47 +525,32 @@ if (
     or before.st_size > 4_000_000
 ):
     raise SystemExit("Claude root launcher failed its trust check")
-descriptor = os.open(path, os.O_RDONLY)
-try:
-    opened = os.fstat(descriptor)
-    identity = (
-        before.st_dev,
-        before.st_ino,
-        before.st_size,
-        before.st_mtime_ns,
-        stat.S_IMODE(before.st_mode),
-    )
-    if identity != (
-        opened.st_dev,
-        opened.st_ino,
-        opened.st_size,
-        opened.st_mtime_ns,
-        stat.S_IMODE(opened.st_mode),
-    ):
-        raise SystemExit("Claude root launcher changed while opening")
-    digest = hashlib.sha256()
-    remaining = opened.st_size
-    while remaining:
-        chunk = os.read(descriptor, min(65_536, remaining))
-        if not chunk:
-            break
-        digest.update(chunk)
-        remaining -= len(chunk)
-    if remaining or os.read(descriptor, 1):
-        raise SystemExit("Claude root launcher changed while reading")
-    after_open = os.fstat(descriptor)
-finally:
-    os.close(descriptor)
-after_path = path.stat()
-for observed in (after_open, after_path):
-    if identity != (
-        observed.st_dev,
-        observed.st_ino,
-        observed.st_size,
-        observed.st_mtime_ns,
-        stat.S_IMODE(observed.st_mode),
-    ):
-        raise SystemExit("Claude root launcher changed during digest")
+identity = (
+    before.st_dev,
+    before.st_ino,
+    before.st_size,
+    before.st_mtime_ns,
+    stat.S_IMODE(before.st_mode),
+)
+digest = hashlib.sha256()
+offset = 0
+while offset < before.st_size:
+    chunk = os.pread(descriptor, min(65_536, before.st_size - offset), offset)
+    if not chunk:
+        break
+    digest.update(chunk)
+    offset += len(chunk)
+if offset != before.st_size or os.pread(descriptor, 1, offset):
+    raise SystemExit("Claude root launcher changed while reading")
+after = os.fstat(descriptor)
+if identity != (
+    after.st_dev,
+    after.st_ino,
+    after.st_size,
+    after.st_mtime_ns,
+    stat.S_IMODE(after.st_mode),
+):
+    raise SystemExit("Claude root launcher changed during digest")
 print(digest.hexdigest())
 PY
 })"; then
