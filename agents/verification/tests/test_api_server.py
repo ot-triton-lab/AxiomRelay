@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 import signal
 import stat
 import struct
@@ -44,6 +45,7 @@ from api.proof_context import (  # noqa: E402
 _REAL_REQUIRE_MCP_RUNTIME = server._require_mcp_runtime
 _REAL_TARGETED_CODEX_EXECUTABLE = server._targeted_codex_executable
 TARGETED_DEADLINE = "2099-01-01T00:00:00+00:00"
+SYSTEM_TRUE = Path(shutil.which("true") or "/usr/bin/true").resolve(strict=True)
 
 
 @pytest.fixture(autouse=True)
@@ -54,12 +56,12 @@ def _mock_mcp_runtime_preflight(
     monkeypatch.setattr(
         server, "_targeted_base_runtime_sha256", lambda: "b" * 64
     )
-    monkeypatch.setattr(server, "_targeted_codex_executable", lambda: Path("/bin/true"))
+    monkeypatch.setattr(server, "_targeted_codex_executable", lambda: SYSTEM_TRUE)
     monkeypatch.setattr(
         server,
         "_targeted_runtime_source_files",
         lambda: {
-            "runtime/bin/python": (Path("/bin/true"), True),
+            "runtime/bin/python": (SYSTEM_TRUE, True),
             "runtime/pyvenv.cfg": (
                 Path(sys.prefix) / "pyvenv.cfg",
                 False,

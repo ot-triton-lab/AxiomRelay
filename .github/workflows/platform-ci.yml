@@ -114,9 +114,11 @@ jobs:
           import pathlib
           import sys
 
+          # GitHub truncates an annotation message at roughly 4 KiB. Keep the
+          # diagnostic tail, where pytest writes the exception and summary.
           text = pathlib.Path(sys.argv[1]).read_text(
               encoding="utf-8", errors="replace"
-          )[-12000:]
+          )[-3500:]
           escaped = (
               text.replace("%", "%25")
               .replace("\r", "%0D")
@@ -144,9 +146,10 @@ jobs:
           import pathlib
           import sys
 
+          # Keep the exception tail inside GitHub's annotation-message limit.
           text = pathlib.Path(sys.argv[1]).read_text(
               encoding="utf-8", errors="replace"
-          )[-12000:]
+          )[-3500:]
           escaped = (
               text.replace("%", "%25")
               .replace("\r", "%0D")

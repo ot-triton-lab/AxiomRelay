@@ -6377,7 +6377,10 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
             env=environment,
             text=True,
             capture_output=True,
-            timeout=30,
+            # This end-to-end case launches the complete cohort shell stack.
+            # Hosted runners can legitimately take more than 30 seconds even
+            # though the same case takes about 20 seconds on a quiet machine.
+            timeout=60,
             check=False,
             pass_fds=tuple(inherited_descriptors),
         )

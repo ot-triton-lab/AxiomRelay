@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
-import fcntl
+import shutil
 import signal
 import stat
 import subprocess
@@ -24,6 +25,7 @@ from agents import claude_core
 
 
 _TRACKED_EXAMPLE = Path(__file__).with_name("fixtures") / "example.md"
+_SYSTEM_TRUE = Path(shutil.which("true") or "/usr/bin/true").resolve(strict=True)
 
 
 @pytest.fixture(autouse=True)
@@ -4875,7 +4877,7 @@ def test_cohort_intent_replay_binds_timeout_codex_and_runner_closure(
         claude_core._admit_cohort_intent(**{**arguments, "timeout_seconds": 61})
     with pytest.raises(claude_core.ClaudeCoreError, match="binding changed"):
         claude_core._admit_cohort_intent(
-            **{**arguments, "codex_bin": Path("/bin/true")}
+            **{**arguments, "codex_bin": _SYSTEM_TRUE}
         )
     closure[0] = "9" * 64
     with pytest.raises(claude_core.ClaudeCoreError, match="binding changed"):
@@ -5099,7 +5101,7 @@ def test_checkpointed_worker_survives_runner_and_codex_deployment_drift(
     fcntl.flock(worker_lock, fcntl.LOCK_EX)
     try:
         resumed = claude_core.run_three_route_cohort(
-            **{**arguments, "codex_bin": Path("/bin/true")}
+            **{**arguments, "codex_bin": _SYSTEM_TRUE}
         )
     finally:
         fcntl.flock(worker_lock, fcntl.LOCK_UN)
