@@ -8240,7 +8240,10 @@ def test_paid_root_failsafe_does_not_reset_inside_one_cycle(tmp_path: Path) -> N
         env=environment,
         text=True,
         capture_output=True,
-        timeout=30,
+        # The runner has already rejected the fourth paid root when it exits;
+        # under suite load its shell descendants can take longer to release
+        # captured pipes, especially on hosted runners.
+        timeout=60,
         check=False,
     )
 
