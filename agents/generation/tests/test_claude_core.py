@@ -27,6 +27,28 @@ _TRACKED_EXAMPLE = Path(__file__).with_name("fixtures") / "example.md"
 
 
 @pytest.fixture(autouse=True)
+def _provide_public_example_statement() -> object:
+    """Make the synthetic statement available without shipping user data."""
+
+    statement = claude_core.GENERATION_ROOT / "data" / "example.md"
+    existed = statement.is_file()
+    original = statement.read_bytes() if existed else None
+    if not existed:
+        statement.parent.mkdir(parents=True, exist_ok=True)
+        statement.write_bytes(_TRACKED_EXAMPLE.read_bytes())
+    try:
+        yield
+    finally:
+        if existed:
+            assert original is not None
+            if not statement.is_file() or statement.read_bytes() != original:
+                statement.parent.mkdir(parents=True, exist_ok=True)
+                statement.write_bytes(original)
+        else:
+            statement.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_publication_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5823,10 +5845,28 @@ def test_declared_complete_reference_candidate_cannot_be_silently_dropped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     problem_id = "canary/sde-weighted-l1-vs-l2-clean"
-    digest = _statement_digest(problem_id)
     root_session_id = "12345678-1234-4123-8123-123456789abc"
+    generation_root = tmp_path / "generation"
+    statement = (
+        generation_root
+        / "data"
+        / "canary"
+        / "sde-weighted-l1-vs-l2-clean.md"
+    )
+    statement.parent.mkdir(parents=True)
+    statement.write_text("Prove the synthetic two-gate claim.\n", encoding="utf-8")
+    monkeypatch.setattr(claude_core, "GENERATION_ROOT", generation_root)
     monkeypatch.setattr(claude_core, "STATE_ROOT", tmp_path / "state")
     monkeypatch.setattr(claude_core, "INPUT_ROOT", tmp_path / "inputs")
+    digest = hashlib.sha256(statement.read_bytes()).hexdigest()
+    candidate_id = "gpt_pro_two_gate_2026_08_30"
+    claude_core.ingest_reference_candidate(
+        problem_id=problem_id,
+        statement_sha256=digest,
+        candidate_id=candidate_id,
+        target_claims=["Audit Gate A and Gate B."],
+        content="Gate A establishes the local estimate. Gate B closes it.\n",
+    )
     _prepare_root(
         problem_id=problem_id,
         statement_sha256=digest,
@@ -5850,9 +5890,8 @@ def test_declared_complete_reference_candidate_cannot_be_silently_dropped(
         claude_core.REFERENCE_CANDIDATE_INVENTORY_SCHEMA
     )
     assert inventory["candidate_count"] == 1
-    candidate_id = "gpt_pro_two_gate_2026_08_30"
     candidate_path = str(inventory["candidates"][0]["path"])
-    candidate_source_path = "gpt-pro-two-gate-candidate-2026-08-30.md"
+    candidate_source_path = f"{candidate_id}.md"
     assert inventory["candidates"][0]["candidate_id"] == candidate_id
     assert candidate_path.startswith(
         ".claude_core_inputs/reference_candidates/"

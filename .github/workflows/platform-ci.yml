@@ -76,9 +76,16 @@ jobs:
             printf no > "$probe_root/denied/secret"
             codex_path="$(python -c 'import pathlib,shutil; print(pathlib.Path(shutil.which("codex")).resolve())')"
             filesystem="$(python -c 'import json,sys; root,codex=sys.argv[1:]; print("{\":minimal\"=\"read\","+json.dumps(codex)+"=\"read\","+json.dumps(root+"/allowed")+"=\"write\","+json.dumps(root+"/denied")+"=\"deny\"}")' "$probe_root" "$codex_path")"
+            # GitHub's hosted Ubuntu seccomp policy rejects bubblewrap's
+            # RTM_NEWADDR loopback setup. Exercise the filesystem profile there;
+            # macOS still exercises the same profile with networking disabled.
+            network_enabled=false
+            if [[ "$RUNNER_OS" == Linux ]]; then
+              network_enabled=true
+            fi
             codex sandbox --permission-profile axiom-ci \
               -c "permissions.axiom-ci.filesystem=$filesystem" \
-              -c 'permissions.axiom-ci.network.enabled=false' \
+              -c "permissions.axiom-ci.network.enabled=$network_enabled" \
               -C "$probe_root/allowed" -- /bin/sh -c \
               'test "$(cat "$1")" = ok && test ! -r "$2" && : > "$3"' \
               axiom-ci "$probe_root/allowed/input" "$probe_root/denied/secret" \

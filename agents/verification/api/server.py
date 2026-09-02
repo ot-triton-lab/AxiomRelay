@@ -63,6 +63,22 @@ def _descriptor_path(descriptor: int) -> Path:
     raise RuntimeError("descriptor filesystem is unavailable")
 
 
+def _bound_directory_access_path(descriptor: int, origin: Path) -> Path:
+    """Return a usable child path while the caller holds a bound directory fd.
+
+    Linux supports child lookup below /proc/self/fd/N. Darwin exposes the
+    directory at /dev/fd/N for metadata and reads, but creation below that path
+    fails. Darwin callers therefore use the validated origin pathname and
+    recheck its inode at the enclosing lock boundary.
+    """
+
+    if sys.platform.startswith("linux"):
+        return _descriptor_path(descriptor)
+    if sys.platform == "darwin":
+        return origin
+    raise RuntimeError("bound directory access is unsupported on this platform")
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORK_DIR = REPO_ROOT.resolve()
 RESULTS_ROOT = WORK_DIR / "results"
@@ -5189,7 +5205,7 @@ def _try_settle_collectible_ready_targeted_intent(
         expected_identity = (binding["st_dev"], binding["st_ino"])
         if (opened_attempt.st_dev, opened_attempt.st_ino) != expected_identity:
             return False
-        locked_dir = _descriptor_path(attempt_fd)
+        locked_dir = _bound_directory_access_path(attempt_fd, attempt_dir)
         try:
             raw_intent = _read_recovery_object(
                 locked_dir / "intent.json",
@@ -5784,9 +5800,9 @@ def _ensure_targeted_execution_snapshot(attempt_dir: Path) -> Dict[str, Any]:
             os.rename(temporary, snapshot_root)
             parent_fd = os.open(
                 attempt_dir,
-                # ``attempt_dir`` is intentionally the held descriptor path
-                # handle yielded by _targeted_attempt_lock, so following this
-                # one kernel fd link preserves the inode fence.
+                # Linux receives the held descriptor path; Darwin receives the
+                # origin path while the enclosing lock retains and rechecks
+                # the bound directory descriptor.
                 os.O_RDONLY | os.O_DIRECTORY,
             )
             try:
@@ -7341,7 +7357,17 @@ def _verification_attempt_lock(verification_attempt_id: str) -> Any:
             raise HTTPException(
                 status_code=409, detail="verifier pass recovery path changed"
             )
-        yield _descriptor_path(attempt_fd)
+        yield _bound_directory_access_path(attempt_fd, attempt_dir)
+        current = attempt_dir.lstat()
+        if (
+            attempt_dir.is_symlink()
+            or not stat.S_ISDIR(current.st_mode)
+            or (current.st_dev, current.st_ino)
+            != (opened.st_dev, opened.st_ino)
+        ):
+            raise HTTPException(
+                status_code=409, detail="verifier pass recovery path changed"
+            )
     finally:
         if lock_fd >= 0:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -7444,7 +7470,17 @@ def _verification_attempt_status_lock(
             raise HTTPException(
                 status_code=409, detail="verifier pass recovery path changed"
             )
-        yield _descriptor_path(attempt_fd)
+        yield _bound_directory_access_path(attempt_fd, attempt_dir)
+        current = attempt_dir.lstat()
+        if (
+            attempt_dir.is_symlink()
+            or not stat.S_ISDIR(current.st_mode)
+            or (current.st_dev, current.st_ino)
+            != (opened.st_dev, opened.st_ino)
+        ):
+            raise HTTPException(
+                status_code=409, detail="verifier pass recovery path changed"
+            )
     finally:
         if lock_fd >= 0:
             if lock_acquired:
@@ -7707,10 +7743,11 @@ def _targeted_attempt_lock(targeted_attempt_id: str) -> Any:
                     status_code=502,
                     detail={"code": "verifier_execution_unknown"},
                 )
-            # Every state operation resolves through the held directory fd, so
-            # a pathname rotation cannot redirect writes into a replacement
-            # attempt tree while a model is running.
-            yield _descriptor_path(attempt_fd), expected
+            # Linux resolves state through the directory fd. Darwin's /dev/fd
+            # cannot create children, so it uses the origin path and validates
+            # the still-open directory identity again before releasing this
+            # lock.
+            yield _bound_directory_access_path(attempt_fd, attempt_dir), expected
             _assert_targeted_attempt_binding(attempt_dir, expected)
         finally:
             os.close(attempt_fd)

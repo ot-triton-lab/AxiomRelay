@@ -280,9 +280,18 @@ then
 fi
 exec {python_source_fd}<"$python_origin"
 python_bootstrap="$descriptor_root/$python_source_fd"
+# Darwin exposes the open interpreter through /dev/fd, but the kernel does not
+# execute a Mach-O image through that pathname. Keep the descriptor as the
+# byte/identity anchor and execute the already validated origin; the bootstrap
+# below compares the origin with the held descriptor both before and after it
+# publishes the content-addressed runtime copy.
+python_bootstrap_command="$python_bootstrap"
+if [[ "$OSTYPE" == darwin* ]]; then
+  python_bootstrap_command="$python_origin"
+fi
 pinned_python_binding=()
 mapfile -t pinned_python_binding < <(
-  "$python_bootstrap" -I -S -B - \
+  "$python_bootstrap_command" -I -S -B - \
     "$python_origin" "$python_bootstrap" "$(dirname "$python_origin")" \
     "$python_runtime_lock" <<'PY'
 import fcntl

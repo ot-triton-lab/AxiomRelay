@@ -17,6 +17,13 @@ if [[ -z "$descriptor_root" ]]; then
   echo "Could not locate a descriptor filesystem (/proc/self/fd or /dev/fd)." >&2
   exit 70
 fi
+descriptor_execution_supported=1
+if [[ "$OSTYPE" == darwin* ]]; then
+  # Darwin permits reads through /dev/fd/N but rejects executable images at
+  # that pathname. Keep each inherited fd for digest/identity checks and use
+  # its separately bound origin path for process creation.
+  descriptor_execution_supported=0
+fi
 
 OWNED_RUNNER_ORIGIN="${RETHLAS_OWNED_EXECUTABLE_ORIGIN:-}"
 OWNED_RUNNER_FD="${RETHLAS_OWNED_EXECUTABLE_FD:-}"
@@ -1916,12 +1923,19 @@ if [[ -n "$COHORT_CODEX_FD" ]]; then
      || "$COHORT_CODEX_FD" -lt 3 \
      || -z "${RETHLAS_COHORT_CODEX_BIN:-}" \
      || -z "${RETHLAS_COHORT_CODEX_SHA256:-}" \
-     || ! -r "$descriptor_root/$COHORT_CODEX_FD" \
-     || ! -x "$descriptor_root/$COHORT_CODEX_FD" ]]; then
+     || ! -r "$descriptor_root/$COHORT_CODEX_FD" ]]; then
     echo "Bound cohort Codex descriptor is invalid." >&2
     exit 70
   fi
-  codex_command="$descriptor_root/$COHORT_CODEX_FD"
+  if [[ "$descriptor_execution_supported" == 1 ]]; then
+    if [[ ! -x "$descriptor_root/$COHORT_CODEX_FD" ]]; then
+      echo "Bound cohort Codex descriptor is not executable." >&2
+      exit 70
+    fi
+    codex_command="$descriptor_root/$COHORT_CODEX_FD"
+  else
+    codex_command="$RETHLAS_COHORT_CODEX_BIN"
+  fi
   cohort_codex_fd_mode=1
 elif [[ -n "${RETHLAS_COHORT_CODEX_BIN:-}" ]]; then
   if [[ -z "${RETHLAS_COHORT_CODEX_SHA256:-}" ]]; then

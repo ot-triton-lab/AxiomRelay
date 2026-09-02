@@ -42,6 +42,42 @@ def _descriptor_path(descriptor: int) -> Path:
     raise ClaudeCoreError("descriptor filesystem is unavailable")
 
 
+def _descriptor_execution_supported() -> bool:
+    """Whether this kernel executes regular files through its fd filesystem."""
+
+    # Darwin's /dev/fd entries are readable, but execve(2) rejects them. The
+    # caller retains the descriptor as an identity anchor and fences the
+    # original pathname immediately around process creation instead.
+    return sys.platform.startswith("linux")
+
+
+def _same_opened_regular_file(path: Path, opened: os.stat_result) -> bool:
+    """Compare a live pathname with an already-open regular-file identity."""
+
+    try:
+        observed = path.lstat()
+    except OSError:
+        return False
+    return (
+        not path.is_symlink()
+        and stat.S_ISREG(observed.st_mode)
+        and (
+            observed.st_dev,
+            observed.st_ino,
+            observed.st_size,
+            observed.st_mtime_ns,
+            stat.S_IMODE(observed.st_mode),
+        )
+        == (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            opened.st_mtime_ns,
+            stat.S_IMODE(opened.st_mode),
+        )
+    )
+
+
 AGENTS_ROOT = Path(__file__).resolve(strict=True).parent
 GENERATION_ROOT = (AGENTS_ROOT / "generation").resolve(strict=True)
 _RUNTIME_BUNDLE_VALUE = globals().get("_RETHLAS_RUNTIME_BUNDLE_DIR")
@@ -7569,7 +7605,10 @@ def _require_codex_login(codex_bin: Path) -> Path:
         ):
             raise ClaudeCoreError("Codex CLI changed during login open")
         pinned = _descriptor_path(descriptor)
-        executable = pinned if pinned.exists() else resolved
+        use_pinned = _descriptor_execution_supported() and pinned.exists()
+        if not _same_opened_regular_file(resolved, opened):
+            raise ClaudeCoreError("Codex CLI changed before login check")
+        executable = pinned if use_pinned else resolved
         completed = subprocess.run(
             [str(executable), "login", "status"],
             cwd=str(AGENTS_ROOT),
@@ -7579,8 +7618,10 @@ def _require_codex_login(codex_bin: Path) -> Path:
             stderr=subprocess.DEVNULL,
             timeout=15,
             check=False,
-            pass_fds=(descriptor,) if pinned.exists() else (),
+            pass_fds=(descriptor,),
         )
+        if not _same_opened_regular_file(resolved, opened):
+            raise ClaudeCoreError("Codex CLI changed during login check")
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ClaudeCoreError("could not verify Codex CLI login") from exc
     finally:
@@ -7851,10 +7892,17 @@ def _execute_owned_command(
         ):
             raise ClaudeCoreError("owned executable digest changed before launch")
         pinned_path = _descriptor_path(executable_fd)
-        if expected_executable_sha256 is not None and not pinned_path.exists():
+        use_pinned = _descriptor_execution_supported() and pinned_path.exists()
+        if (
+            expected_executable_sha256 is not None
+            and _descriptor_execution_supported()
+            and not pinned_path.exists()
+        ):
             raise ClaudeCoreError("digest-bound executable launch is unavailable")
+        if not _same_opened_regular_file(executable, opened):
+            raise ClaudeCoreError("owned executable changed before launch")
         normalized_command = [
-            str(pinned_path if pinned_path.exists() else executable),
+            str(pinned_path if use_pinned else executable),
             *command[1:],
         ]
         command_environment = os.environ.copy()
@@ -7978,6 +8026,14 @@ def _execute_owned_command(
             pass_fds=(executable_fd, *inherited_fds),
             env=command_environment,
         )
+        if not _same_opened_regular_file(executable, opened):
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise ClaudeCoreError("owned executable changed during launch")
     except OSError as exc:
         raise ClaudeCoreError("owned command could not start") from exc
     finally:
