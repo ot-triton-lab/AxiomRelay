@@ -146,16 +146,39 @@ jobs:
           import pathlib
           import sys
 
-          # Keep the exception tail inside GitHub's annotation-message limit.
-          text = pathlib.Path(sys.argv[1]).read_text(
+          full = pathlib.Path(sys.argv[1]).read_text(
               encoding="utf-8", errors="replace"
-          )[-3500:]
-          escaped = (
-              text.replace("%", "%25")
-              .replace("\r", "%0D")
-              .replace("\n", "%0A")
           )
-          print(f"::error title={sys.argv[2]}::{escaped}")
+
+          def escape(value: str) -> str:
+              return (
+                  value.replace("%", "%25")
+                  .replace("\r", "%0D")
+                  .replace("\n", "%0A")
+              )
+
+          # Preserve every failed node id even when one suite has many
+          # failures. The final traceback tail remains a separate annotation.
+          failed_lines = [
+              line[:2800] for line in full.splitlines() if line.startswith("FAILED ")
+          ]
+          chunks: list[str] = []
+          current = ""
+          for line in failed_lines:
+              candidate = line if not current else current + "\n" + line
+              if len(candidate) > 3000:
+                  chunks.append(current)
+                  current = line
+              else:
+                  current = candidate
+          if current:
+              chunks.append(current)
+          for index, chunk in enumerate(chunks, start=1):
+              title = f"{sys.argv[2]} failed tests {index}/{len(chunks)}"
+              print(f"::error title={title}::{escape(chunk)}")
+
+          # Keep the exception tail inside GitHub's annotation-message limit.
+          print(f"::error title={sys.argv[2]}::{escape(full[-3000:])}")
           PY
               return 1
             fi

@@ -2200,6 +2200,40 @@ if [[ -n "$EXTERNAL_PLAN_SET_SELECTION" ]]; then
   CLAUDE_CORE_SOURCE_FD=""
   CLAUDE_CORE_SOURCE_ORIGIN=""
   CLAUDE_CORE_LOGICAL_ORIGIN="$(cd "$ROOT_DIR/.." && pwd -P)/claude_core.py"
+  claude_core_descriptor_sha256() {
+    "$TRUSTED_PYTHON_BIN" -I -S -B - "$1" <<'PY'
+import hashlib
+import os
+import stat
+import sys
+
+descriptor = int(sys.argv[1])
+before = os.fstat(descriptor)
+if not stat.S_ISREG(before.st_mode) or before.st_size > 16_000_000:
+    raise SystemExit(1)
+offset = 0
+digest = hashlib.sha256()
+while offset < before.st_size:
+    chunk = os.pread(descriptor, min(65_536, before.st_size - offset), offset)
+    if not chunk:
+        raise SystemExit(1)
+    digest.update(chunk)
+    offset += len(chunk)
+after = os.fstat(descriptor)
+identity = lambda value: (
+    value.st_dev,
+    value.st_ino,
+    value.st_mode,
+    value.st_nlink,
+    value.st_size,
+    value.st_mtime_ns,
+    value.st_ctime_ns,
+)
+if offset != before.st_size or identity(after) != identity(before):
+    raise SystemExit(1)
+print(digest.hexdigest())
+PY
+  }
   if [[ -n "$COHORT_HOST_SOURCE_FD" \
      || -n "$COHORT_HOST_SOURCE_SNAPSHOT" \
      || -n "$COHORT_HOST_SOURCE_ORIGIN" \
@@ -2230,18 +2264,17 @@ if [[ -n "$EXTERNAL_PLAN_SET_SELECTION" ]]; then
     CLAUDE_CORE_SOURCE="$descriptor_root/$CLAUDE_CORE_SOURCE_FD"
     CLAUDE_CORE_SOURCE_ORIGIN="$CLAUDE_CORE_LOGICAL_ORIGIN"
     CLAUDE_CORE_SOURCE_SHA256="$({
-      "$TRUSTED_PYTHON_BIN" -I -B -c \
-        'import hashlib,pathlib,sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' \
-        "$CLAUDE_CORE_SOURCE"
-    })"
+      claude_core_descriptor_sha256 "$CLAUDE_CORE_SOURCE_FD"
+    })" || {
+      echo "Could not bind the Claude core host-source descriptor." >&2
+      exit 70
+    }
     claude_core_fd_mode=1
   fi
   claude_core_source_unchanged() {
     local current
     current="$({
-      "$TRUSTED_PYTHON_BIN" -I -B -c \
-        'import hashlib,pathlib,sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' \
-        "$CLAUDE_CORE_SOURCE"
+      claude_core_descriptor_sha256 "$CLAUDE_CORE_SOURCE_FD"
     })" || return 1
     [[ "$current" == "$CLAUDE_CORE_SOURCE_SHA256" ]]
   }
@@ -2689,8 +2722,19 @@ TRUSTED_REASONING_CHECKPOINT_RECOVERY_MCP_TOML="${TRUSTED_REASONING_CHECKPOINT_B
 START_EPOCH=$(date +%s)
 
 elapsed_timer() {
+  local timer_sleep_pid=""
+  trap '
+    if [[ -n "${timer_sleep_pid:-}" ]]; then
+      kill "$timer_sleep_pid" 2>/dev/null || true
+      wait "$timer_sleep_pid" 2>/dev/null || true
+    fi
+    exit 0
+  ' TERM INT HUP
   while true; do
-    sleep "$TIMER_INTERVAL_SECONDS"
+    sleep "$TIMER_INTERVAL_SECONDS" &
+    timer_sleep_pid=$!
+    wait "$timer_sleep_pid" || exit 0
+    timer_sleep_pid=""
     local now
     now=$(date +%s)
     local secs=$((now - START_EPOCH))

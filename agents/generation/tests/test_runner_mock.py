@@ -35,6 +35,40 @@ REQUIRED_MODULES = (
     "gmpy2",
 )
 
+
+def _linux_cohort_namespace_available() -> bool:
+    """Return whether this host can exercise the production Linux capsule."""
+
+    if not sys.platform.startswith("linux"):
+        return True
+    required = (Path("/usr/bin/unshare"), Path("/bin/true"))
+    if any(not path.is_file() or not os.access(path, os.X_OK) for path in required):
+        return False
+    try:
+        completed = subprocess.run(
+            [
+                "/usr/bin/unshare",
+                "--user",
+                "--map-root-user",
+                "--mount",
+                "--pid",
+                "--fork",
+                "--mount-proc",
+                "/bin/true",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+_LINUX_COHORT_NAMESPACE_AVAILABLE = _linux_cohort_namespace_available()
+
 TRUSTED_MCP_LOGICAL_MODULES = (
     "review.contracts",
     "review.critic",
@@ -6184,6 +6218,13 @@ def test_claude_root_takeover_dry_run_replays_committed_successor(
 @pytest.mark.parametrize(
     "descriptor_bound", [False, True], ids=["pathname", "pinned-fds"]
 )
+@pytest.mark.skipif(
+    not _LINUX_COHORT_NAMESPACE_AVAILABLE,
+    reason=(
+        "host kernel denies the unprivileged mount/PID namespace required "
+        "by the production Linux cohort capsule"
+    ),
+)
 def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
     tmp_path: Path,
     retrieval_section: str,
@@ -6350,6 +6391,10 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
         host_source_snapshot.chmod(0o400)
         codex_descriptor = os.open(codex_path, os.O_RDONLY)
         source_descriptor = os.open(host_source_snapshot, os.O_RDONLY)
+        # Darwin's /dev/fd path duplicates the shared file description. The
+        # production readers must use positional reads and ignore this offset.
+        os.lseek(codex_descriptor, 0, os.SEEK_END)
+        os.lseek(source_descriptor, 0, os.SEEK_END)
         inherited_descriptors.extend((codex_descriptor, source_descriptor))
         environment.update(
             {
@@ -6377,10 +6422,7 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
             env=environment,
             text=True,
             capture_output=True,
-            # This end-to-end case launches the complete cohort shell stack.
-            # Hosted runners can legitimately take more than 30 seconds even
-            # though the same case takes about 20 seconds on a quiet machine.
-            timeout=60,
+            timeout=30,
             check=False,
             pass_fds=tuple(inherited_descriptors),
         )
@@ -8240,10 +8282,7 @@ def test_paid_root_failsafe_does_not_reset_inside_one_cycle(tmp_path: Path) -> N
         env=environment,
         text=True,
         capture_output=True,
-        # The runner has already rejected the fourth paid root when it exits;
-        # under suite load its shell descendants can take longer to release
-        # captured pipes, especially on hosted runners.
-        timeout=60,
+        timeout=30,
         check=False,
     )
 

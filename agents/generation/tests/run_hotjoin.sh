@@ -5675,8 +5675,19 @@ else
 fi
 
 elapsed_timer() {
+  local timer_sleep_pid=""
+  trap '
+    if [[ -n "${timer_sleep_pid:-}" ]]; then
+      kill "$timer_sleep_pid" 2>/dev/null || true
+      wait "$timer_sleep_pid" 2>/dev/null || true
+    fi
+    exit 0
+  ' TERM INT HUP
   while true; do
-    sleep "$TIMER_INTERVAL_SECONDS"
+    sleep "$TIMER_INTERVAL_SECONDS" &
+    timer_sleep_pid=$!
+    wait "$timer_sleep_pid" || exit 0
+    timer_sleep_pid=""
     local now
     now=$(date +%s)
     local secs=$((now - START_EPOCH))
