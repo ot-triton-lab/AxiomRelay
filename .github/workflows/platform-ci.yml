@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: platform-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux-macos:
     # This file is authored in the private release-source repository and then
@@ -18,7 +22,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -158,26 +162,29 @@ jobs:
             agents/verification/.venv/bin/python -m pytest -q \
             agents/verification/tests/test_api_server.py &
           verification_api_pid=$!
-          run_test claude-core \
-            agents/.generation-venv/bin/python -m pytest -q \
-            agents/generation/tests/test_claude_core.py &
-          claude_core_pid=$!
           run_test verification-client \
             agents/.generation-venv/bin/python -m pytest -q \
             agents/generation/tests/test_verification_client.py &
           verification_client_pid=$!
-          run_test runner-mock \
-            agents/.generation-venv/bin/python -m pytest -q \
-            agents/generation/tests/test_runner_mock.py &
-          runner_mock_pid=$!
           failures=0
           for test_pid in \
             "$verification_api_pid" \
-            "$claude_core_pid" \
-            "$verification_client_pid" \
-            "$runner_mock_pid"; do
+            "$verification_client_pid"; do
             if ! wait "$test_pid"; then
               failures=1
             fi
           done
+          # These two suites launch many nested process trees with deliberate
+          # short liveness deadlines. Keep them serial so a small hosted runner
+          # cannot turn CPU contention into false timeout failures.
+          if ! run_test claude-core \
+            agents/.generation-venv/bin/python -m pytest -q \
+            agents/generation/tests/test_claude_core.py; then
+            failures=1
+          fi
+          if ! run_test runner-mock \
+            agents/.generation-venv/bin/python -m pytest -q \
+            agents/generation/tests/test_runner_mock.py; then
+            failures=1
+          fi
           exit "$failures"

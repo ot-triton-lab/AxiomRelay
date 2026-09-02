@@ -9373,7 +9373,7 @@ def test_continue_wrapper_restart_rotates_token_and_snapshot_path_not_identity(
         env=environment,
         text=True,
         capture_output=True,
-        timeout=20,
+        timeout=40,
         check=False,
     )
     second = subprocess.run(
@@ -9382,7 +9382,7 @@ def test_continue_wrapper_restart_rotates_token_and_snapshot_path_not_identity(
         env=environment,
         text=True,
         capture_output=True,
-        timeout=20,
+        timeout=40,
         check=False,
     )
 
