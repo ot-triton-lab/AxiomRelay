@@ -2,6 +2,7 @@
 set -euo pipefail
 
 RUNNER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+GENERATION_ROOT="$(cd "$RUNNER_DIR/.." && pwd -P)"
 LEGACY_RUNNER="$RUNNER_DIR/run_legacy.sh"
 CLAUDE_RUNNER="$RUNNER_DIR/run_claude_core.sh"
 HOTJOIN_RUNNER="$RUNNER_DIR/run_hotjoin.sh"
@@ -43,7 +44,50 @@ else
   MODEL_POLICY_PROFILE_WAS_EXPLICIT=0
 fi
 AXIOM_RELAY_MODEL_POLICY_PROFILE="${AXIOM_RELAY_MODEL_POLICY_PROFILE:-compatible}"
+PROBLEM_FILE="${PROBLEM_FILE:-}"
 RUN_MODE_WAS_PROMPTED=0
+
+problem_file_is_valid() {
+  local candidate="$1"
+  [[ -n "$candidate" \
+     && "$candidate" != /* \
+     && "$candidate" != ".." \
+     && "$candidate" != ../* \
+     && "$candidate" != */.. \
+     && "$candidate" != */../* \
+     && "$candidate" == data/*.md \
+     && -f "$GENERATION_ROOT/$candidate" \
+     && ! -L "$GENERATION_ROOT/$candidate" ]]
+}
+
+prompt_problem_file() {
+  local selection
+  while true; do
+    printf 'Enter the problem path below agents/generation (for example data/my_problem.md): ' >&2
+    if ! IFS= read -r selection; then
+      echo "Problem-file selection ended before a path was provided." >&2
+      exit 1
+    fi
+    if problem_file_is_valid "$selection"; then
+      PROBLEM_FILE="$selection"
+      return
+    fi
+    echo "Problem file must be an existing, non-symlink Markdown file below data/." >&2
+  done
+}
+
+if [[ -z "$PROBLEM_FILE" ]]; then
+  if [[ -t 0 && -t 2 ]]; then
+    prompt_problem_file
+  else
+    echo "PROBLEM_FILE is required in noninteractive use (for example data/my_problem.md)." >&2
+    exit 1
+  fi
+elif ! problem_file_is_valid "$PROBLEM_FILE"; then
+  echo "PROBLEM_FILE must name an existing, non-symlink Markdown file below agents/generation/data/." >&2
+  exit 1
+fi
+export PROBLEM_FILE
 
 print_run_mode_menu() {
   cat >&2 <<'EOF'

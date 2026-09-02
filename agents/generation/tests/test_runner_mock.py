@@ -1186,8 +1186,12 @@ for checkpoint_id in (
     assert checkpoint["required"] is True
     assert checkpoint["default_tools_approval_mode"] == "approve"
 assert pathlib.Path(reasoning_mcp["command"]).is_absolute()
+expected_generation_python = os.environ.get(
+    "MOCK_EXPECTED_GENERATION_PYTHON",
+    sys.executable,
+)
 assert pathlib.Path(reasoning_mcp["command"]).resolve() == pathlib.Path(
-    sys.executable
+    expected_generation_python
 ).resolve()
 loader_args = reasoning_mcp["args"]
 assert loader_args[:3] == ["-I", "-B", "-c"]
@@ -1832,6 +1836,10 @@ def _mock_environment(
         }
     )
     environment.update(extra_environment or {})
+    environment["MOCK_EXPECTED_GENERATION_PYTHON"] = environment.get(
+        "RETHLAS_GENERATION_PYTHON_BIN",
+        str(runner.parents[2] / ".generation-venv" / "bin" / "python"),
+    )
     return environment
 
 
@@ -1859,6 +1867,33 @@ def _run_mock(
         timeout=20,
         check=False,
     )
+
+
+def _install_mock_official_native_claude(
+    home: Path,
+    executable_source: Path,
+    *,
+    version: str = "2.1.258",
+) -> tuple[Path, Path]:
+    versioned = home / ".local" / "share" / "claude" / "versions" / version
+    app_binary = (
+        home
+        / ".local"
+        / "share"
+        / "claude"
+        / "ClaudeCode.app"
+        / "Contents"
+        / "MacOS"
+        / "claude"
+    )
+    current = home / ".local" / "bin" / "claude"
+    versioned.parent.mkdir(parents=True)
+    app_binary.parent.mkdir(parents=True)
+    current.parent.mkdir(parents=True)
+    shutil.copy2(executable_source, versioned)
+    os.link(versioned, app_binary)
+    current.symlink_to(versioned)
+    return current, versioned
 
 
 def test_claude_runtime_separates_lifetime_and_snapshot_locks(
@@ -4019,6 +4054,194 @@ def test_mode_prompt_explains_tradeoffs_and_selects_core(tmp_path: Path) -> None
     assert "Persistent logical Claude Code root" in completed.stderr
     assert "Mode:       core" in completed.stdout
     assert "Main agent: gpt-sol" in completed.stdout
+
+
+def test_noninteractive_launcher_requires_an_explicit_problem_file(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    environment = _mock_environment(runner, fake_bin, mode="trusted")
+    environment.pop("PROBLEM_FILE")
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "PROBLEM_FILE is required in noninteractive use" in completed.stderr
+
+
+def test_core_prefers_documented_generation_venv_over_path_python(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    shadow_bin = tmp_path / "path-shadow"
+    shadow_bin.mkdir()
+    (shadow_bin / "python3").symlink_to(fake_bin / "python3")
+    fake_codex = fake_bin / "codex"
+    fake_codex.write_text(
+        fake_codex.read_text(encoding="utf-8").replace(
+            "#!/usr/bin/env python3",
+            f"#!{fake_bin / 'python'}",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    environment = _mock_environment(runner, fake_bin, mode="trusted")
+    environment["PATH"] = (
+        f"{shadow_bin}{os.pathsep}{fake_bin}{os.pathsep}{os.environ['PATH']}"
+    )
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "Generation python3 must be a non-symlink executable" not in completed.stderr
+
+
+def test_reviewed_prefers_documented_generation_venv_over_path_python(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    shadow_bin = tmp_path / "reviewed-path-shadow"
+    shadow_bin.mkdir()
+    (shadow_bin / "python3").symlink_to(fake_bin / "python3")
+    shutil.rmtree(_module_stub(fake_bin, "sympy"))
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="forged",
+        extra_environment={
+            "AXIOM_RELAY_RUN_MODE": "reviewed",
+            "AXIOM_RELAY_REVIEW_RUN_ID": "reviewed-default-python",
+        },
+    )
+    environment["PATH"] = (
+        f"{shadow_bin}{os.pathsep}{fake_bin}{os.pathsep}{os.environ['PATH']}"
+    )
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "sympy: module not found" in completed.stderr
+    assert "non-symlink Python interpreter" not in completed.stderr
+
+
+def test_claude_root_accepts_official_native_two_hardlink_install(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "RETHLAS_MAIN_AGENT": "opus",
+            "RETHLAS_CLAUDE_ROOT_PRINT_CMD": "1",
+        },
+    )
+    current, versioned = _install_mock_official_native_claude(
+        Path(environment["HOME"]),
+        fake_bin / "claude",
+    )
+    environment["RETHLAS_CLAUDE_BIN"] = str(current)
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert versioned.stat().st_nlink == 2
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "Claude CLI failed its trust check" not in completed.stderr
+
+
+def test_claude_root_rejects_arbitrary_second_hardlink(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    os.link(fake_bin / "claude", tmp_path / "untrusted-claude-alias")
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "RETHLAS_MAIN_AGENT": "opus",
+            "RETHLAS_CLAUDE_ROOT_PRINT_CMD": "1",
+        },
+    )
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 70
+    assert "Claude CLI failed its trust check" in completed.stderr
+
+
+def test_claude_runtime_accepts_canonical_tmpdir_parent_alias(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    canonical_tmp = tmp_path / "canonical-tmp"
+    canonical_tmp.mkdir()
+    tmp_alias = tmp_path / "tmp-alias"
+    tmp_alias.symlink_to(canonical_tmp, target_is_directory=True)
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "RETHLAS_MAIN_AGENT": "opus",
+            "RETHLAS_CLAUDE_ROOT_PRINT_CMD": "1",
+            "TMPDIR": str(tmp_alias),
+        },
+    )
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "runtime dependency bundle root is unsafe" not in completed.stderr
 
 
 @pytest.mark.parametrize(
@@ -10291,9 +10514,9 @@ def test_runner_rejects_symlink_python_before_control_or_codex(
     tmp_path: Path,
 ) -> None:
     runner, runtime_bin = _make_runner_tree(tmp_path)
-    python3 = runtime_bin / "python3"
-    python3.unlink()
-    python3.symlink_to("python")
+    python = runtime_bin / "python"
+    python.unlink()
+    python.symlink_to("python3")
     calls_file = tmp_path / "codex-calls.jsonl"
     environment = _mock_environment(
         runner,
@@ -10326,7 +10549,7 @@ def test_runner_rejects_mismatched_python_alias_before_control_or_codex(
     tmp_path: Path,
 ) -> None:
     runner, runtime_bin = _make_runner_tree(tmp_path)
-    python_alias = runtime_bin / "python"
+    python_alias = runtime_bin / "python3"
     python_alias.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
     python_alias.chmod(0o755)
     calls_file = tmp_path / "codex-calls.jsonl"
@@ -10672,12 +10895,15 @@ def test_runner_rejects_python_environment_inside_generation_workspace(
     generation_root = runner.parent.parent
     writable_venv = generation_root / ".venv"
     subprocess.run(
-        [sys.executable, "-m", "venv", str(writable_venv)],
+        [sys.executable, "-m", "venv", "--copies", str(writable_venv)],
         check=True,
         capture_output=True,
         text=True,
     )
     environment = _mock_environment(runner, fake_bin, mode="forged")
+    environment["RETHLAS_GENERATION_PYTHON_BIN"] = str(
+        writable_venv / "bin" / "python"
+    )
     environment["PATH"] = (
         f"{writable_venv / 'bin'}{os.pathsep}"
         f"{fake_bin}{os.pathsep}{environment['PATH']}"
@@ -10749,7 +10975,7 @@ def test_runner_rejects_symlinked_problem_before_any_codex_call(
     )
 
     assert completed.returncode == 1
-    assert "symlink component is forbidden" in completed.stderr
+    assert "non-symlink Markdown file" in completed.stderr
     assert not calls_file.exists()
 
 

@@ -8,7 +8,11 @@ if (( BASH_VERSINFO[0] < 5 )); then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROBLEM_FILE="${PROBLEM_FILE:-data/example.md}"
+PROBLEM_FILE="${PROBLEM_FILE:-}"
+if [[ -z "$PROBLEM_FILE" ]]; then
+  echo "PROBLEM_FILE is required (for example data/my_problem.md)." >&2
+  exit 1
+fi
 MODEL="${MODEL:-gpt-5.6-sol}"
 REASONING_EFFORT="${REASONING_EFFORT:-max}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
@@ -180,6 +184,8 @@ REQUIRED_GENERATION_MODULES=(
 # virtual environment and then ask that same interpreter whether it is safe.
 if [[ -n "$GENERATION_PYTHON_SELECTION" ]]; then
   python_command="$GENERATION_PYTHON_SELECTION"
+elif [[ -x "$ROOT_DIR/../.generation-venv/bin/python" ]]; then
+  python_command="$ROOT_DIR/../.generation-venv/bin/python"
 else
   python_command="$(command -v python3 || true)"
 fi

@@ -1439,6 +1439,84 @@ def _claude_environment() -> Dict[str, str]:
     return environment
 
 
+def _is_official_claude_native_hardlink(
+    executable: Path,
+    metadata: os.stat_result,
+    *,
+    permitted_uids: set[int],
+) -> bool:
+    """Recognize only Claude's exact two-link native installer layout.
+
+    Current native macOS releases link the versioned CLI binary to the
+    executable inside ``ClaudeCode.app``.  Treating every multi-link file as
+    trusted would weaken deployment binding, so this exception verifies both
+    names, their common inode, the current-version symlink, and every writable
+    directory in the installer-owned suffix below HOME.
+    """
+
+    if metadata.st_nlink != 2:
+        return False
+    try:
+        home_value = os.getenv("HOME", "")
+        if not home_value:
+            return False
+        home = Path(home_value).resolve(strict=True)
+        install_root = home / ".local" / "share" / "claude"
+        versions = install_root / "versions"
+        current_link = home / ".local" / "bin" / "claude"
+        app_binary = (
+            install_root / "ClaudeCode.app" / "Contents" / "MacOS" / "claude"
+        )
+        if (
+            executable.parent != versions
+            or re.fullmatch(
+                r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?",
+                executable.name,
+            )
+            is None
+        ):
+            return False
+        link_metadata = current_link.lstat()
+        app_metadata = app_binary.lstat()
+        if (
+            not stat.S_ISLNK(link_metadata.st_mode)
+            or link_metadata.st_uid not in permitted_uids
+            or current_link.resolve(strict=True) != executable
+            or app_binary.is_symlink()
+            or not stat.S_ISREG(app_metadata.st_mode)
+            or app_metadata.st_nlink != 2
+            or app_metadata.st_uid not in permitted_uids
+            or stat.S_IMODE(app_metadata.st_mode) & 0o022
+            or stat.S_IMODE(app_metadata.st_mode) & 0o111 == 0
+            or (app_metadata.st_dev, app_metadata.st_ino)
+            != (metadata.st_dev, metadata.st_ino)
+        ):
+            return False
+        directories = (
+            home,
+            home / ".local",
+            home / ".local" / "bin",
+            home / ".local" / "share",
+            install_root,
+            versions,
+            install_root / "ClaudeCode.app",
+            install_root / "ClaudeCode.app" / "Contents",
+            install_root / "ClaudeCode.app" / "Contents" / "MacOS",
+        )
+        for directory in directories:
+            directory_metadata = directory.lstat()
+            if (
+                directory.is_symlink()
+                or not stat.S_ISDIR(directory_metadata.st_mode)
+                or directory_metadata.st_uid not in permitted_uids
+                or stat.S_IMODE(directory_metadata.st_mode) & 0o022
+            ):
+                return False
+        return True
+    except (OSError, RuntimeError):
+        return False
+
+
 def _trusted_claude_executable() -> Path:
     expected_sha256 = os.getenv("VERIFY_CLAUDE_BIN_SHA256", "")
     if _SHA256_RE.fullmatch(expected_sha256) is None:
@@ -1456,11 +1534,16 @@ def _trusted_claude_executable() -> Path:
             status_code=500, detail="cold Claude verifier executable is unavailable"
         ) from exc
     permitted_uids = {0, os.geteuid()} if hasattr(os, "geteuid") else {0}
+    official_hardlink = _is_official_claude_native_hardlink(
+        resolved,
+        metadata,
+        permitted_uids=permitted_uids,
+    )
     if (
         not resolved.is_absolute()
         or resolved.is_symlink()
         or not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_nlink != 1
+        or (metadata.st_nlink != 1 and not official_hardlink)
         or metadata.st_uid not in permitted_uids
         or stat.S_IMODE(metadata.st_mode) & 0o022
         or stat.S_IMODE(metadata.st_mode) & 0o111 == 0

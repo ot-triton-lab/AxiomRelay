@@ -198,6 +198,10 @@ Foundry, or API-key configuration. The verifier has the parallel
 `VERIFY_CLAUDE_AUTH_MODE` setting. Explicit modes bind both the provider and
 Claude CLI's reported authentication method; `subscription` also requires a
 reported subscription type. A mismatch stops the run before a model call.
+The trust check accepts the official native Claude Code layout in which the
+versioned executable and `ClaudeCode.app` executable are two hard links to the
+same inode. This is an exact-layout exception; unrelated multi-link binaries
+remain rejected.
 
 ### 2. Create the Python environments
 
@@ -290,8 +294,11 @@ PROBLEM_FILE=data/my_problem.md \
 ./tests/run_example.sh
 ```
 
-Run `./tests/run_example.sh` in a terminal without settings to use the
-interactive selector.
+Run `./tests/run_example.sh` in a terminal without settings to enter the
+problem path and use the interactive execution selector. In noninteractive
+use, `PROBLEM_FILE` is required; there is no bundled example problem fallback.
+When no interpreter override is supplied, GPT-Sol and reviewed mode use the
+documented `agents/.generation-venv/bin/python` environment automatically.
 
 ## Asking GPT Pro about one blocked proof gap
 

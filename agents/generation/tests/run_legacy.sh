@@ -49,7 +49,11 @@ else
 fi
 unset RETHLAS_OWNED_EXECUTABLE_ORIGIN RETHLAS_OWNED_EXECUTABLE_FD
 unset RETHLAS_OWNED_EXECUTABLE_SHA256
-PROBLEM_FILE="${PROBLEM_FILE:-data/example.md}"
+PROBLEM_FILE="${PROBLEM_FILE:-}"
+if [[ -z "$PROBLEM_FILE" ]]; then
+  echo "PROBLEM_FILE is required (for example data/my_problem.md)." >&2
+  exit 1
+fi
 MODEL="${MODEL:-gpt-5.6-sol}"
 REASONING_EFFORT="${REASONING_EFFORT:-max}"
 MAIN_AGENT_SELECTION="${RETHLAS_MAIN_AGENT:-gpt-sol}"
@@ -166,6 +170,8 @@ REQUIRED_GENERATION_MODULES=(
 # virtual environment and then ask that same interpreter whether it is safe.
 if [[ -n "$GENERATION_PYTHON_SELECTION" ]]; then
   python_command="$GENERATION_PYTHON_SELECTION"
+elif [[ -x "$ROOT_DIR/../.generation-venv/bin/python" ]]; then
+  python_command="$ROOT_DIR/../.generation-venv/bin/python"
 else
   python_command="$(command -v python3 || true)"
 fi

@@ -3537,6 +3537,69 @@ for event in events:
     return executable, calls
 
 
+def _install_official_native_claude_layout(
+    home: Path,
+    executable_source: Path,
+    *,
+    version: str = "2.1.258",
+) -> tuple[Path, Path]:
+    """Reproduce the native installer names without depending on macOS."""
+
+    versioned = home / ".local" / "share" / "claude" / "versions" / version
+    app_binary = (
+        home
+        / ".local"
+        / "share"
+        / "claude"
+        / "ClaudeCode.app"
+        / "Contents"
+        / "MacOS"
+        / "claude"
+    )
+    current = home / ".local" / "bin" / "claude"
+    versioned.parent.mkdir(parents=True)
+    app_binary.parent.mkdir(parents=True)
+    current.parent.mkdir(parents=True)
+    shutil.copy2(executable_source, versioned)
+    os.link(versioned, app_binary)
+    current.symlink_to(versioned)
+    return current, versioned
+
+
+def test_trusted_claude_accepts_exact_native_two_hardlink_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable, _ = _install_fake_claude(tmp_path, payload={"status": "correct"})
+    home = tmp_path / "native-home"
+    current, versioned = _install_official_native_claude_layout(home, executable)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(server, "CLAUDE_BIN", str(current))
+    monkeypatch.setenv(
+        "VERIFY_CLAUDE_BIN_SHA256",
+        hashlib.sha256(versioned.read_bytes()).hexdigest(),
+    )
+
+    assert versioned.stat().st_nlink == 2
+    assert server._trusted_claude_executable() == versioned
+
+
+def test_trusted_claude_rejects_arbitrary_second_hardlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable, _ = _install_fake_claude(tmp_path, payload={"status": "correct"})
+    os.link(executable, tmp_path / "untrusted-alias")
+    monkeypatch.setattr(server, "CLAUDE_BIN", str(executable))
+    monkeypatch.setenv(
+        "VERIFY_CLAUDE_BIN_SHA256",
+        hashlib.sha256(executable.read_bytes()).hexdigest(),
+    )
+
+    with pytest.raises(HTTPException, match="executable is unsafe"):
+        server._trusted_claude_executable()
+
+
 def test_cold_claude_verifier_is_toolless_ephemeral_and_contract_bound(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

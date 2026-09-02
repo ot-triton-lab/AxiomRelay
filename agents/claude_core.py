@@ -1082,12 +1082,15 @@ def _assert_runtime_dependency_closure_current() -> None:
     try:
         root_metadata = _RUNTIME_BUNDLE_DIR.lstat()
         resolved_root = _RUNTIME_BUNDLE_DIR.resolve(strict=True)
+        resolved_root_metadata = resolved_root.stat()
     except (OSError, RuntimeError) as exc:
         raise ClaudeCoreError("runtime dependency bundle is unavailable") from exc
     allowed_uids = {0, os.geteuid()} if hasattr(os, "geteuid") else {0}
     if (
-        resolved_root != _RUNTIME_BUNDLE_DIR
+        _RUNTIME_BUNDLE_DIR.is_symlink()
         or not stat.S_ISDIR(root_metadata.st_mode)
+        or (root_metadata.st_dev, root_metadata.st_ino)
+        != (resolved_root_metadata.st_dev, resolved_root_metadata.st_ino)
         or root_metadata.st_uid not in allowed_uids
         or stat.S_IMODE(root_metadata.st_mode) & 0o077
     ):

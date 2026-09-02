@@ -66,7 +66,11 @@ esac
 if [[ "$OWNER_ADMIN_MODE" == 1 ]]; then
   PROBLEM_FILE="data/${2}.md"
 else
-  PROBLEM_FILE="${PROBLEM_FILE:-data/example.md}"
+  PROBLEM_FILE="${PROBLEM_FILE:-}"
+fi
+if [[ -z "$PROBLEM_FILE" ]]; then
+  echo "PROBLEM_FILE is required (for example data/my_problem.md)." >&2
+  exit 1
 fi
 MAIN_AGENT="${RETHLAS_MAIN_AGENT:-opus}"
 if [[ -v RETHLAS_MODEL_POLICY_PROFILE ]]; then
@@ -1151,17 +1155,85 @@ if ! claude_cli_sha256="$({
 import hashlib
 import os
 import pathlib
+import re
 import stat
 import sys
 
-origin = pathlib.Path(sys.argv[1]).absolute()
+origin = pathlib.Path(sys.argv[1]).resolve(strict=True)
 snapshot = pathlib.Path(sys.argv[2]).absolute()
 before = origin.lstat()
 allowed_uids = {0, os.geteuid()}
+
+
+def official_native_hardlink_layout(metadata):
+    """Admit only Claude's exact two-link native installer layout."""
+
+    if metadata.st_nlink != 2:
+        return False
+    try:
+        home_value = os.environ.get("HOME", "")
+        if not home_value:
+            return False
+        home = pathlib.Path(home_value).resolve(strict=True)
+        install_root = home / ".local" / "share" / "claude"
+        versions = install_root / "versions"
+        current_link = home / ".local" / "bin" / "claude"
+        app_binary = install_root / "ClaudeCode.app" / "Contents" / "MacOS" / "claude"
+        if (
+            origin.parent != versions
+            or re.fullmatch(
+                r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?",
+                origin.name,
+            )
+            is None
+        ):
+            return False
+        link_metadata = current_link.lstat()
+        app_metadata = app_binary.lstat()
+        if (
+            not stat.S_ISLNK(link_metadata.st_mode)
+            or link_metadata.st_uid not in allowed_uids
+            or current_link.resolve(strict=True) != origin
+            or app_binary.is_symlink()
+            or not stat.S_ISREG(app_metadata.st_mode)
+            or app_metadata.st_nlink != 2
+            or app_metadata.st_uid not in allowed_uids
+            or stat.S_IMODE(app_metadata.st_mode) & 0o022
+            or stat.S_IMODE(app_metadata.st_mode) & 0o111 == 0
+            or (app_metadata.st_dev, app_metadata.st_ino)
+            != (metadata.st_dev, metadata.st_ino)
+        ):
+            return False
+        directories = (
+            home,
+            home / ".local",
+            home / ".local" / "bin",
+            home / ".local" / "share",
+            install_root,
+            versions,
+            install_root / "ClaudeCode.app",
+            install_root / "ClaudeCode.app" / "Contents",
+            install_root / "ClaudeCode.app" / "Contents" / "MacOS",
+        )
+        for directory in directories:
+            directory_metadata = directory.lstat()
+            if (
+                directory.is_symlink()
+                or not stat.S_ISDIR(directory_metadata.st_mode)
+                or directory_metadata.st_uid not in allowed_uids
+                or stat.S_IMODE(directory_metadata.st_mode) & 0o022
+            ):
+                return False
+        return True
+    except (OSError, RuntimeError):
+        return False
+
+
+official_hardlink = official_native_hardlink_layout(before)
 if (
     origin.is_symlink()
     or not stat.S_ISREG(before.st_mode)
-    or before.st_nlink != 1
+    or (before.st_nlink != 1 and not official_hardlink)
     or before.st_uid not in allowed_uids
     or stat.S_IMODE(before.st_mode) & 0o022
     or stat.S_IMODE(before.st_mode) & 0o111 == 0
@@ -1179,6 +1251,7 @@ try:
         before.st_size,
         before.st_mtime_ns,
         stat.S_IMODE(before.st_mode),
+        before.st_nlink,
     )
     if identity != (
         opened.st_dev,
@@ -1186,6 +1259,7 @@ try:
         opened.st_size,
         opened.st_mtime_ns,
         stat.S_IMODE(opened.st_mode),
+        opened.st_nlink,
     ):
         raise SystemExit("Claude CLI changed while opening")
     destination_fd = os.open(
@@ -1223,14 +1297,18 @@ if identity != (
     after_open.st_size,
     after_open.st_mtime_ns,
     stat.S_IMODE(after_open.st_mode),
+    after_open.st_nlink,
 ) or identity != (
     after_path.st_dev,
     after_path.st_ino,
     after_path.st_size,
     after_path.st_mtime_ns,
     stat.S_IMODE(after_path.st_mode),
+    after_path.st_nlink,
 ):
     raise SystemExit("Claude CLI changed during snapshot")
+if official_hardlink and not official_native_hardlink_layout(after_path):
+    raise SystemExit("Claude native installation changed during snapshot")
 snapshot_digest = hashlib.sha256()
 with snapshot.open("rb") as handle:
     while chunk := handle.read(1_048_576):

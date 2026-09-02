@@ -169,6 +169,9 @@ Claude 订阅 OAuth，可显式设置 `AXIOM_RELAY_CLAUDE_AUTH_MODE=subscription
 Verifier 对应的变量是 `VERIFY_CLAUDE_AUTH_MODE`。显式选择模式后，启动器会同时
 核对 provider 和 Claude CLI 报告的认证方式；`subscription` 还要求 CLI 返回订阅
 类型。任何一项对不上，都会在调用模型之前停止。
+官方原生 Claude Code 安装会让版本目录里的可执行文件与 `ClaudeCode.app` 里的
+可执行文件成为同一 inode 的两个硬链接，AxiomRelay 会识别这种固定布局。除此
+之外，带额外硬链接的可执行文件仍会被拒绝。
 
 ### 2. 创建 Python 环境
 
@@ -255,7 +258,7 @@ PROBLEM_FILE=data/my_problem.md \
 ./tests/run_example.sh
 ```
 
-如果不设置这些环境变量，直接在终端运行 `./tests/run_example.sh`，脚本会打开交互选择器。
+如果不设置这些环境变量，直接在终端运行 `./tests/run_example.sh`，脚本会先让你输入题目路径，再打开运行模式选择器。非交互运行必须设置 `PROBLEM_FILE`，仓库不再假定存在示例题目。没有手动指定 Python 时，GPT-Sol 和 reviewed 模式会自动使用文档中创建的 `agents/.generation-venv/bin/python`。
 
 ## 证明卡住时，向 GPT Pro 追问一个 gap
 
