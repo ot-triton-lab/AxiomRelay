@@ -7872,9 +7872,9 @@ def test_council_stream_progress_projects_structure_without_message_text() -> No
 def test_council_stream_progress_emits_content_free_liveness_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(claude_core, "COUNCIL_PROGRESS_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(claude_core, "COUNCIL_PROGRESS_HEARTBEAT_SECONDS", 0.02)
     process = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(0.15)"],
+        [sys.executable, "-c", "import time; time.sleep(0.5)"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

@@ -8340,6 +8340,10 @@ def _communicate_council_bounded(
     writer.start()
     deadline = time.monotonic() + timeout_seconds
     next_heartbeat = time.monotonic() + COUNCIL_PROGRESS_HEARTBEAT_SECONDS
+    poll_seconds = min(
+        0.1,
+        max(0.001, COUNCIL_PROGRESS_HEARTBEAT_SECONDS),
+    )
     timed_out = False
     while process.poll() is None:
         if exceeded["stdout"] or exceeded["stderr"]:
@@ -8362,7 +8366,7 @@ def _communicate_council_bounded(
             except Exception:
                 pass
             next_heartbeat = now + COUNCIL_PROGRESS_HEARTBEAT_SECONDS
-        time.sleep(0.1)
+        time.sleep(poll_seconds)
     if process.poll() is None:
         with suppress(BaseException):
             _kill_group(process)
