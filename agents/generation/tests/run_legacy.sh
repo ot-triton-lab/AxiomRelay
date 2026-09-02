@@ -2644,16 +2644,16 @@ PY
       exit 70
     }
     COHORT_PERMISSION_CONFIG_ARGS=(
-      -c 'default_permissions="axiom-relay-cohort"'
-      -c "permissions.axiom-relay-cohort.filesystem=$COHORT_PERMISSION_FILESYSTEM_TOML"
-      -c 'permissions.axiom-relay-cohort.network.enabled=false'
-      -c 'approval_policy="never"'
+      --config 'default_permissions="axiom-relay-cohort"'
+      --config "permissions.axiom-relay-cohort.filesystem=$COHORT_PERMISSION_FILESYSTEM_TOML"
+      --config 'permissions.axiom-relay-cohort.network.enabled=false'
+      --config 'approval_policy="never"'
     )
     cohort_probe_path="$ROOT_DIR/results/$problem_rel/.axiom-isolation-probe"
     if ! "$CODEX_BIN" sandbox \
       --permission-profile axiom-relay-cohort \
-      -c "permissions.axiom-relay-cohort.filesystem=$COHORT_PERMISSION_FILESYSTEM_TOML" \
-      -c 'permissions.axiom-relay-cohort.network.enabled=false' \
+      --config "permissions.axiom-relay-cohort.filesystem=$COHORT_PERMISSION_FILESYSTEM_TOML" \
+      --config 'permissions.axiom-relay-cohort.network.enabled=false' \
       -C "$ROOT_DIR" -- /bin/sh -c \
       'test -r "$1" && test ! -r "$2" && : > "$3"' \
       axiom-relay-cohort \

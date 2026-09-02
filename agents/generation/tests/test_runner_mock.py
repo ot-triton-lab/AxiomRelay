@@ -1861,6 +1861,42 @@ def _run_mock(
     )
 
 
+def test_claude_runtime_separates_lifetime_and_snapshot_locks(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "RETHLAS_MAIN_AGENT": "opus",
+            "RETHLAS_CLAUDE_ROOT_PRINT_CMD": "1",
+        },
+    )
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    runtime_root = runner.parents[2] / ".generation-venv"
+    lifetime_lock = runtime_root / ".lock"
+    snapshot_lock = runtime_root / ".snapshot.lock"
+    assert lifetime_lock.is_file() and not lifetime_lock.is_symlink()
+    assert snapshot_lock.is_file() and not snapshot_lock.is_symlink()
+    assert (lifetime_lock.stat().st_dev, lifetime_lock.stat().st_ino) != (
+        snapshot_lock.stat().st_dev,
+        snapshot_lock.stat().st_ino,
+    )
+
+
 def _install_mock_cadence_adapter(tmp_path: Path) -> tuple[Path, Path, Path]:
     adapter_path = tmp_path / "agents" / "hotjoin_adapter.py"
     state_path = tmp_path / "cadence-state.json"

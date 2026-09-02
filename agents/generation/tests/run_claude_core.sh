@@ -205,24 +205,27 @@ fi
 # cannot change between host commands, MCP restarts, workers, or continuations.
 python_origin="$PYTHON_BIN"
 python_runtime_lock="$ROOT_DIR/../.generation-venv/.lock"
+python_snapshot_lock="$ROOT_DIR/../.generation-venv/.snapshot.lock"
 if [[ -L "$python_origin" || ! -f "$python_origin" \
-   || -L "$python_runtime_lock" ]]; then
+   || -L "$python_runtime_lock" || -L "$python_snapshot_lock" ]]; then
   echo "Claude root requires a copied Python interpreter and a safe runtime deployment lock path." >&2
   exit 1
 fi
-# ``.lock`` is intentionally runtime state rather than a tracked venv file.
-# Create it durably on the first clean-checkout launch, then bind its inode
-# before asking flock to join the deployment epoch.
+# Both lock files are intentionally runtime state rather than tracked venv
+# files. ``.lock`` is held shared for the lifetime of this launcher, whereas
+# ``.snapshot.lock`` serializes only publication of a content-addressed Python
+# copy. Keeping them on distinct inodes avoids relying on the platform-specific
+# interaction between BSD ``flock`` and POSIX ``lockf`` (notably on Darwin).
 if ! "$python_origin" -I -S -B - \
-  "$python_runtime_lock" "$python_origin" <<'PY'
+  "$python_runtime_lock" "$python_snapshot_lock" "$python_origin" <<'PY'
 import os
 import pathlib
 import stat
 import sys
 
-lock = pathlib.Path(sys.argv[1]).absolute()
-python = pathlib.Path(sys.argv[2]).absolute()
-venv_root = lock.parent
+locks = [pathlib.Path(value).absolute() for value in sys.argv[1:3]]
+python = pathlib.Path(sys.argv[3]).absolute()
+venv_root = locks[0].parent
 allowed_uids = {0, os.geteuid()}
 root_metadata = venv_root.lstat()
 if (
@@ -233,28 +236,31 @@ if (
     or stat.S_IMODE(root_metadata.st_mode) & 0o022
 ):
     raise SystemExit("Claude Python runtime root is unsafe")
-flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-try:
-    descriptor = os.open(lock, flags, 0o600)
-except FileExistsError:
-    descriptor = os.open(
-        lock, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-    )
-try:
-    opened = os.fstat(descriptor)
-    observed = lock.lstat()
-    if (
-        lock.is_symlink()
-        or not stat.S_ISREG(opened.st_mode)
-        or opened.st_nlink != 1
-        or opened.st_uid not in allowed_uids
-        or (opened.st_dev, opened.st_ino)
-        != (observed.st_dev, observed.st_ino)
-    ):
-        raise SystemExit("Claude Python runtime deployment lock is unsafe")
-    os.fsync(descriptor)
-finally:
-    os.close(descriptor)
+for lock in locks:
+    if lock.parent != venv_root:
+        raise SystemExit("Claude Python runtime lock escaped its runtime root")
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock, flags, 0o600)
+    except FileExistsError:
+        descriptor = os.open(
+            lock, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        )
+    try:
+        opened = os.fstat(descriptor)
+        observed = lock.lstat()
+        if (
+            lock.is_symlink()
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid not in allowed_uids
+            or (opened.st_dev, opened.st_ino)
+            != (observed.st_dev, observed.st_ino)
+        ):
+            raise SystemExit("Claude Python runtime deployment lock is unsafe")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 parent_fd = os.open(
     venv_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
 )
@@ -293,7 +299,7 @@ pinned_python_binding=()
 mapfile -t pinned_python_binding < <(
   "$python_bootstrap_command" -I -S -B - \
     "$python_origin" "$python_bootstrap" "$(dirname "$python_origin")" \
-    "$python_runtime_lock" <<'PY'
+    "$python_snapshot_lock" <<'PY'
 import fcntl
 import hashlib
 import os
@@ -326,8 +332,8 @@ if (
     )
 ):
     raise SystemExit("Python snapshot publication lock is unsafe")
-# lockf/fcntl record locks are intentionally independent of the parent
-# process's lifetime BSD flock.  They serialize only this short publication.
+# This lock lives on a distinct inode from the parent process's lifetime
+# ``flock`` and serializes only this short publication on every platform.
 fcntl.lockf(snapshot_lock_fd, fcntl.LOCK_EX)
 lock_after = snapshot_lock.lstat()
 if (
