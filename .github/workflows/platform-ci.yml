@@ -10,6 +10,9 @@ permissions:
 
 jobs:
   linux-macos:
+    # This file is authored in the private release-source repository and then
+    # exported verbatim. Only the sanitized public repository runs platform CI.
+    if: github.repository == 'ot-triton-lab/AxiomRelay'
     strategy:
       fail-fast: false
       matrix:
