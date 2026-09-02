@@ -1,0 +1,6 @@
+themes/
+public/
+__pycache__/
+# Generated chapters (synced from results/ at serve time)
+content/*/
+__pycache__/

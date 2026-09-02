@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+      <meta http-equiv="X-UA-Compatible" content="IE=edge">
+      <meta http-equiv="content-type" content="text/html; charset=utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="shortcut icon" href="{{ get_url(path="favicon.ico") }}" type="image/x-icon">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ get_url(path="favicon-32x32.png") }}">
+    {% if page %}
+      {% if page.description %}
+      <meta name="description" content="{{ page.description }}" />
+      {% elif config.description %}
+      <meta name="description" content="{{ config.description }}" />
+      {% endif %}
+    {% elif config.description %}
+      <meta name="description" content="{{ config.description }}" />
+    {% endif %}
+
+      <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+
+      {% block js %}
+      {% endblock js %}
+
+      {% block css %}
+      <link rel="stylesheet" href="{{ get_url(path="book.css") | safe }}">
+      {% endblock css %}
+
+      {% block extra_head %}
+      {% endblock extra_head %}
+
+    <script>
+    MathJax = {
+      packages: {'[+]': ['ams','cancel','amscd']},
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true,
+        processEnvironments: true
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']
+      }
+    };
+    </script>
+    <link rel="stylesheet" href="{{ get_url(path="dist/tikzjax/fonts.css") }}">
+    <script src="{{ get_url(path="dist/tikzjax/tikzjax.js") }}" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" id="MathJax-script" async></script>
+
+    <!-- <link rel="stylesheet" href="{{ get_url(path='css/toc.css') }}"> -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+
+    <script>
+        (function() {
+            // 1. Dark/Light Theme Check
+            var savedTheme = localStorage.getItem("theme");
+            var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+            if (savedTheme === "dark" || (!savedTheme && systemDark)) {
+                document.documentElement.setAttribute("data-theme", "dark");
+            }
+
+            // 2. Collapse Check (Anti-Flash)
+            var savedCollapse = localStorage.getItem("collapse-sidebar");
+            if (savedCollapse === 'true') {
+                document.documentElement.classList.add('collapse-mode');
+            }
+        })();
+    </script>
+
+</head>
+
+    <body>
+    {% include "leftbar/directory.html" %}
+
+    <div class="page">
+        {% include "topbar/header.html" %}
+
+            <div class="page__content">
+                {% if config.build_search_index %}
+                <div class="search-container">
+                    <input id="search" type="search" placeholder="Search..">
+                    <div class="search-results">
+                        <div class="search-results__header"></div>
+                        <ul class="search-results__items"></ul>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="book-content">
+                    {% block content %}
+                        <div class="page-layout">
+                            <main class="main-content">
+                                {% if section.title %}
+                                        <h1>{{ section.title }}</h1>
+                                {% endif %}
+
+                                {% if section.content %}
+                                        {{ section.content | safe }}
+                                {% endif %}
+                            </main>
+                        </div>
+                    {% endblock content %}
+                </div> <div class="prev-link">
+                    {% block prev_link %}
+                    {% endblock prev_link %}
+                </div>
+
+                <div class="next-link">
+                    {% block next_link %}
+                    {% endblock next_link %}
+                </div>
+
+            </div> </div> {% block js_body %}
+        {% if config.build_search_index %}
+        <script type="text/javascript" src="{{ get_url(path="elasticlunr.min.js") | safe }}"></script>
+        <script type="text/javascript" src="{{ get_url(path="search_index.en.js") | safe }}"></script>
+        {% endif %}
+        <script type="text/javascript" src="{{ get_url(path="book.js") | safe }}"></script>
+    {% endblock js_body %}
+
+    <script src="{{ get_url(path='js/toc.js') }}"></script>
+    <script src="{{ get_url(path="js/theme.js") }}"></script>
+
+    <script>
+        window.site_base_url = "{{ config.base_url | safe }}";
+    </script>
+    <script src="{{ get_url(path='js/hotkeys.js') }}"></script>
+    <script src="{{ get_url(path='js/matrix.js') }}"></script>
+    <script src="{{ get_url(path='js/aquarium.js') }}"></script>
+
+    {% include "windows/help.html" %}
+
+    <footer style="text-align:center; padding:1.5em 0 1em; font-size:0.85em; opacity:0.6;">
+        Powered by <a href="https://www.getzola.org/" target="_blank" rel="noopener">Zola</a>
+        &amp; <a href="https://www.getzola.org/themes/matbook/" target="_blank" rel="noopener">MATbook</a>
+    </footer>
+
+    </body>
+</html>

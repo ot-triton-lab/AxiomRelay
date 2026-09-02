@@ -1,0 +1,7 @@
+interface:
+  display_name: "Construct Counterexamples"
+  short_description: "Test one concrete claim without search churn"
+  default_prompt: "Use $construct-counterexamples to locally falsify one concrete claim and return a batched branch-impacting result."
+
+policy:
+  allow_implicit_invocation: true

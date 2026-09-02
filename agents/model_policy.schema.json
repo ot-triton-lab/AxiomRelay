@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rethlas.local/schemas/model_policy.schema.json",
+  "title": "AxiomRelay model policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "problem_id",
+    "statement_sha256",
+    "revision",
+    "parent_policy_sha256",
+    "profile",
+    "root",
+    "generator",
+    "verifier",
+    "fallback_policy",
+    "selection_authority"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "rethlas_model_policy_v1"
+    },
+    "problem_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"
+    },
+    "statement_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "parent_policy_sha256": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/sha256"
+        }
+      ]
+    },
+    "profile": {
+      "enum": [
+        "compatible",
+        "balanced",
+        "max_diversity",
+        "economy",
+        "custom"
+      ]
+    },
+    "root": {
+      "$ref": "#/$defs/rootActor"
+    },
+    "generator": {
+      "$ref": "#/$defs/generatorActor"
+    },
+    "verifier": {
+      "$ref": "#/$defs/verifierPolicy"
+    },
+    "fallback_policy": {
+      "const": "forbid"
+    },
+    "selection_authority": {
+      "const": "owner_wrapper"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "model": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@\\[\\]-]{0,127}$"
+    },
+    "effort": {
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "adapter": {
+      "enum": [
+        "codex_cli",
+        "claude_cli"
+      ]
+    },
+    "provider": {
+      "enum": [
+        "openai",
+        "anthropic",
+        "vertex",
+        "bedrock",
+        "foundry"
+      ]
+    },
+    "rootActor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter",
+        "provider",
+        "model",
+        "effort",
+        "memory_mode"
+      ],
+      "properties": {
+        "adapter": {
+          "$ref": "#/$defs/adapter"
+        },
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "effort": {
+          "$ref": "#/$defs/effort"
+        },
+        "memory_mode": {
+          "const": "persistent_logical_root"
+        }
+      }
+    },
+    "generatorActor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter",
+        "provider",
+        "model",
+        "effort",
+        "lane_policy",
+        "max_live_paid_lanes",
+        "session_mode"
+      ],
+      "properties": {
+        "adapter": {
+          "const": "codex_cli"
+        },
+        "provider": {
+          "const": "openai"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "effort": {
+          "$ref": "#/$defs/effort"
+        },
+        "lane_policy": {
+          "const": "uniform"
+        },
+        "max_live_paid_lanes": {
+          "const": 3
+        },
+        "session_mode": {
+          "const": "isolated"
+        }
+      }
+    },
+    "verifierPass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pass_index",
+        "role",
+        "adapter",
+        "provider",
+        "model",
+        "launch_model",
+        "effort",
+        "session_mode"
+      ],
+      "properties": {
+        "pass_index": {
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "role": {
+          "enum": [
+            "primary",
+            "adversarial_full_claim_audit"
+          ]
+        },
+        "adapter": {
+          "$ref": "#/$defs/adapter"
+        },
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "launch_model": {
+          "$ref": "#/$defs/model"
+        },
+        "effort": {
+          "$ref": "#/$defs/effort"
+        },
+        "session_mode": {
+          "const": "cold"
+        }
+      }
+    },
+    "verifierPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quorum",
+        "passes",
+        "require_distinct_models",
+        "require_distinct_providers",
+        "require_adversarial_distinct_from_root",
+        "automatic_tiebreaker"
+      ],
+      "properties": {
+        "quorum": {
+          "const": 2
+        },
+        "passes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/verifierPass"
+                },
+                {
+                  "properties": {
+                    "pass_index": {
+                      "const": 1
+                    },
+                    "role": {
+                      "const": "primary"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/verifierPass"
+                },
+                {
+                  "properties": {
+                    "pass_index": {
+                      "const": 2
+                    },
+                    "role": {
+                      "const": "adversarial_full_claim_audit"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "require_distinct_models": {
+          "type": "boolean"
+        },
+        "require_distinct_providers": {
+          "type": "boolean"
+        },
+        "require_adversarial_distinct_from_root": {
+          "type": "boolean"
+        },
+        "automatic_tiebreaker": {
+          "const": false
+        }
+      }
+    }
+  }
+}

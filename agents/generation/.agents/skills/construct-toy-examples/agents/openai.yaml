@@ -1,0 +1,7 @@
+interface:
+  display_name: "Construct Toy Examples"
+  short_description: "Use simple examples to guide proof search"
+  default_prompt: "Use $construct-toy-examples after a concrete root obstruction to analyze local toy examples, then return one consolidated phase-boundary record."
+
+policy:
+  allow_implicit_invocation: true

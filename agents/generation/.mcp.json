@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "rethlas-root": {
+      "type": "stdio",
+      "command": "${RETHLAS_CLAUDE_PINNED_PYTHON_BIN}",
+      "args": [
+        "-I",
+        "-B",
+        "-c",
+        "import hashlib,os,sys\nfrom pathlib import Path\nsnapshot=Path(sys.argv[1])\nexpected=sys.argv[2]\norigin=sys.argv[3]\nwith snapshot.open('rb') as handle:\n    source=handle.read(16000001)\nif len(source)>16000000 or hashlib.sha256(source).hexdigest()!=expected:\n    raise SystemExit('authenticated host source snapshot mismatch')\nsys.argv=[origin,*sys.argv[4:]]\nglobals()['__file__']=origin\nglobals()['_RETHLAS_LOADED_SOURCE_SHA256']=expected\nglobals()['_RETHLAS_RUNTIME_BUNDLE_DIR']=os.environ.get('RETHLAS_CLAUDE_RUNTIME_BUNDLE_DIR')\nglobals()['_RETHLAS_RUNTIME_BUNDLE_SHA256']=os.environ.get('RETHLAS_CLAUDE_RUNTIME_BUNDLE_SHA256')\nglobals()['_RETHLAS_PINNED_PYTHON_BIN']=os.environ.get('RETHLAS_CLAUDE_PINNED_PYTHON_BIN')\nglobals()['_RETHLAS_PINNED_PYTHON_SHA256']=os.environ.get('RETHLAS_CLAUDE_PINNED_PYTHON_SHA256')\nglobals()['_RETHLAS_DURABLE_RUNTIME_BUNDLE']=(os.environ.get('RETHLAS_CLAUDE_DURABLE_RUNTIME_BUNDLE')=='1')\nexec(compile(source,origin,'exec'),globals(),globals())",
+        "${RETHLAS_CLAUDE_CORE_SNAPSHOT}",
+        "${RETHLAS_CLAUDE_CORE_SOURCE_SHA256}",
+        "${RETHLAS_CLAUDE_CORE_ORIGIN}"
+      ],
+      "timeout": 14500000,
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      }
+    }
+  }
+}

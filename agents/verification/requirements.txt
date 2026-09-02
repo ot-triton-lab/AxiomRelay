@@ -1,0 +1,3 @@
+-r mcp/requirements.txt
+-r api/requirements.txt
+pytest>=8.0.0

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Identify Key Failures"
+  short_description: "Compress three route failures"
+  default_prompt: "Use $identify-key-failures to compress the three terminal route-solver reports into one next-step synthesis."
+
+policy:
+  allow_implicit_invocation: true

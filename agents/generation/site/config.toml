@@ -1,0 +1,26 @@
+base_url = "http://localhost:3264"
+theme = "MATbook"
+title = "AxiomRelay results"
+description = "Proof generation results"
+compile_sass = true
+build_search_index = true
+
+taxonomies = [
+  { name = "tags", paginate_by = 10, rss = true }
+]
+
+[markdown]
+external_links_target_blank = true
+smart_punctuation = true
+
+[markdown.highlighting]
+theme = "github-dark"
+
+[extra]
+tikzjax = false
+mathjax = true
+
+[extra.booktheme]
+home_url = "/"
+book_number_chapters = true
+book_only_current_section_pages = false

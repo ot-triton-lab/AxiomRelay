@@ -1,0 +1,7 @@
+interface:
+  display_name: "Obtain Immediate Conclusions"
+  short_description: "Derive conclusions without tool churn"
+  default_prompt: "Use $obtain-immediate-conclusions to derive and stress-test immediate consequences within one coherent reasoning phase."
+
+policy:
+  allow_implicit_invocation: true

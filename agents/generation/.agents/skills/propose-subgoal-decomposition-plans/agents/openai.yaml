@@ -1,0 +1,7 @@
+interface:
+  display_name: "Propose Decomposition Plans"
+  short_description: "Design three independent routes"
+  default_prompt: "Use $propose-subgoal-decomposition-plans to produce exactly three materially different, scope-disjoint proof routes for one safe fanout."
+
+policy:
+  allow_implicit_invocation: true

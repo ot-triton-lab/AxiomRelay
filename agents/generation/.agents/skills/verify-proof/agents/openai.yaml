@@ -1,0 +1,7 @@
+interface:
+  display_name: "Verify Proof"
+  short_description: "Verify proofs with local service"
+  default_prompt: "Use $verify-proof only for a complete candidate, persist one batched verifier report, and retrieve only for a verifier-identified named gap."
+
+policy:
+  allow_implicit_invocation: true

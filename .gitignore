@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Agent runtime artifacts
+/agents/.verification_receipts/
+/agents/.trusted_generation_runtime/
+/agents/.generation_control/
+/agents/.rethlas_verifier_control/
+/agents/.rethlas-publication-identity-*.lock
+/agents/.rethlas_hotjoin/
+/agents/.rethlas_advisor/
+/agents/.claude_core/
+/agents/.generation-venv/
+/agents/generation/.claude_core_inputs/
+/agents/generation/data/frontiermath/
+agents/generation/logs/
+agents/generation/memory/
+agents/generation/results/
+agents/generation/downloads/
+# Reference candidates may contain pasted third-party answers. Keep every new
+# candidate packet local; already-tracked historical fixtures remain tracked.
+agents/generation/data/**/*.refs/
+agents/verification/logs/
+agents/verification/memory/
+agents/verification/results/
+
+# Zola build output and downloaded theme are ignored by agents/generation/site/.gitignore too.
+agents/generation/site/public/
+agents/generation/site/themes/
+agents/generation/site/content/*/

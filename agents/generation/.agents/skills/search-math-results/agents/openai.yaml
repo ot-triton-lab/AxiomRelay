@@ -1,0 +1,7 @@
+interface:
+  display_name: "Search Math Results"
+  short_description: "Resolve one named external knowledge gap"
+  default_prompt: "Use $search-math-results to resolve one named external knowledge gap under the bounded retrieval policy."
+
+policy:
+  allow_implicit_invocation: true

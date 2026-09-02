@@ -1,0 +1,7 @@
+interface:
+  display_name: "Recursive Proving"
+  short_description: "Run three safe proof routes"
+  default_prompt: "Use $recursive-proving to spawn exactly three context-free route solvers in one fanout, one per bound plan, with no child recursion or shared-memory writes."
+
+policy:
+  allow_implicit_invocation: true
