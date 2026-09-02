@@ -2,6 +2,11 @@
 # Start the verifier service with one resolved, fail-closed model profile.
 set -euo pipefail
 
+if (( BASH_VERSINFO[0] < 5 )); then
+  echo "AxiomRelay requires Bash 5 or newer (macOS: brew install bash)." >&2
+  exit 1
+fi
+
 VERIFY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PYTHON_BIN="$VERIFY_ROOT/.venv/bin/python"
 UVICORN_BIN="$VERIFY_ROOT/.venv/bin/uvicorn"
@@ -43,6 +48,7 @@ CLAUDE_MAX_RETRIES_SELECTION="${CLAUDE_CODE_MAX_RETRIES:-0}"
 CLAUDE_MAX_TURNS_SELECTION="${CLAUDE_CODE_MAX_TURNS:-1}"
 CLAUDE_MAX_OUTPUT_TOKENS_SELECTION="${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-128000}"
 OPERATIONAL_RESUMES_SELECTION="${VERIFY_MAX_OPERATIONAL_RESUMES:-5}"
+CLAUDE_AUTH_MODE_SELECTION="${VERIFY_CLAUDE_AUTH_MODE:-auto}"
 
 case "$PROFILE" in
   compatible|balanced|economy|max_diversity) ;;
@@ -90,10 +96,74 @@ if [[ ! "$OPERATIONAL_RESUMES_SELECTION" =~ ^[0-9]+$ ]]; then
   echo "VERIFY_MAX_OPERATIONAL_RESUMES must be a nonnegative integer." >&2
   exit 1
 fi
+case "$CLAUDE_AUTH_MODE_SELECTION" in
+  auto|subscription|api|vertex|bedrock|foundry) ;;
+  *) echo "VERIFY_CLAUDE_AUTH_MODE must be auto, subscription, api, vertex, bedrock, or foundry." >&2; exit 1 ;;
+esac
 if [[ ! -x "$PYTHON_BIN" || ! -x "$UVICORN_BIN" ]]; then
   echo "Verifier virtual environment is unavailable." >&2
   exit 1
 fi
+if ! "$PYTHON_BIN" -I -S -B -c \
+  'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] < (3, 14) else 1)'; then
+  echo "Verifier requires Python 3.11, 3.12, or 3.13." >&2
+  exit 1
+fi
+
+resolve_executable() {
+  "$PYTHON_BIN" -I -S -B -c \
+    'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' \
+    "$1"
+}
+
+if ! server_is_loopback="$({
+  "$PYTHON_BIN" -I -S -B - "$HOST_SELECTION" <<'PY'
+import ipaddress
+import sys
+
+host = sys.argv[1]
+if host.casefold() == "localhost":
+    print("1")
+else:
+    try:
+        print("1" if ipaddress.ip_address(host).is_loopback else "0")
+    except ValueError:
+        print("0")
+PY
+})"; then
+  echo "Could not validate VERIFY_SERVER_HOST." >&2
+  exit 1
+fi
+if [[ "$server_is_loopback" != 1 ]]; then
+  if [[ "${VERIFY_TLS_TERMINATED:-0}" != 1 ]]; then
+    echo "A non-loopback verifier requires VERIFY_TLS_TERMINATED=1 behind a trusted HTTPS proxy." >&2
+    exit 1
+  fi
+  if ! VERIFY_TOKEN_CANDIDATE="${VERIFY_API_TOKEN:-}" \
+    "$PYTHON_BIN" -I -S -B - <<'PY'
+import base64
+import binascii
+import os
+import re
+
+token = os.environ["VERIFY_TOKEN_CANDIDATE"]
+try:
+    if re.fullmatch(r"[0-9a-fA-F]{64,}", token):
+        raw = bytes.fromhex(token)
+    elif re.fullmatch(r"[A-Za-z0-9_-]{43,}", token):
+        raw = base64.urlsafe_b64decode(token + "=" * ((4 - len(token) % 4) % 4))
+    else:
+        raise SystemExit(1)
+except (ValueError, binascii.Error):
+    raise SystemExit(1)
+raise SystemExit(0 if len(raw) >= 32 and len(set(raw)) >= 12 else 1)
+PY
+  then
+    echo "A non-loopback verifier requires a 256-bit random hex or URL-safe base64 VERIFY_API_TOKEN." >&2
+    exit 1
+  fi
+fi
+export VERIFY_SERVER_HOST="$HOST_SELECTION"
 
 export RETHLAS_MODEL_POLICY_PROFILE="$PROFILE"
 export VERIFY_REQUEST_TIMEOUT_SECONDS="$REQUEST_TIMEOUT_SELECTION"
@@ -117,7 +187,7 @@ if [[ "$PROFILE" == max_diversity ]]; then
     echo "max_diversity requires an absolute executable Claude CLI." >&2
     exit 1
   fi
-  claude_target="$(realpath "$claude_command" || true)"
+  claude_target="$(resolve_executable "$claude_command" 2>/dev/null || true)"
   if [[ "$claude_target" != /* || ! -f "$claude_target" \
      || -L "$claude_target" || ! -x "$claude_target" ]]; then
     echo "max_diversity Claude CLI target is unsafe." >&2
@@ -131,7 +201,7 @@ if [[ "$PROFILE" == max_diversity ]]; then
     echo "max_diversity Claude CLI is not authenticated." >&2
     exit 1
   fi
-  if ! provider="$({
+  if ! auth_binding_json="$({
     RETHLAS_CLAUDE_AUTH_JSON="$auth_json" "$PYTHON_BIN" -I -B - <<'PY'
 import json
 import os
@@ -144,12 +214,75 @@ if provider in {"firstParty", "first_party"}:
     provider = "anthropic"
 if provider not in {"anthropic", "vertex", "bedrock", "foundry"}:
     raise SystemExit(1)
-print(provider)
+auth_method = value.get("authMethod")
+subscription_type = value.get("subscriptionType")
+if (
+    not isinstance(auth_method, str)
+    or not auth_method
+    or len(auth_method.encode("utf-8")) > 128
+    or (
+        subscription_type is not None
+        and (
+            not isinstance(subscription_type, str)
+            or len(subscription_type.encode("utf-8")) > 128
+        )
+    )
+):
+    raise SystemExit(1)
+print(
+    json.dumps(
+        {
+            "provider": provider,
+            "auth_method": auth_method,
+            "subscription_type": subscription_type or "",
+        },
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+)
 PY
   })"; then
     echo "max_diversity Claude auth provider is unsupported." >&2
     exit 1
   fi
+  auth_binding_value() {
+    RETHLAS_AUTH_BINDING_JSON="$auth_binding_json" \
+    RETHLAS_AUTH_BINDING_FIELD="$1" \
+      "$PYTHON_BIN" -I -B -c \
+      'import json,os; print(json.loads(os.environ["RETHLAS_AUTH_BINDING_JSON"])[os.environ["RETHLAS_AUTH_BINDING_FIELD"]])'
+  }
+  provider="$(auth_binding_value provider)"
+  auth_method="$(auth_binding_value auth_method)"
+  subscription_type="$(auth_binding_value subscription_type)"
+  case "$CLAUDE_AUTH_MODE_SELECTION" in
+    auto) ;;
+    subscription)
+      if [[ "$provider" != anthropic \
+         || "$auth_method" != claude.ai \
+         || -z "$subscription_type" \
+         || -n "${ANTHROPIC_API_KEY:-}" \
+         || -n "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
+        echo "subscription verifier auth requires a Claude subscription and rejects cloud/API-key precedence." >&2
+        exit 1
+      fi
+      ;;
+    api)
+      if [[ "$provider" != anthropic \
+         || "$auth_method" != api_key \
+         || -z "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
+        echo "api verifier auth requires an Anthropic API credential and no cloud provider." >&2
+        exit 1
+      fi
+      ;;
+    vertex|bedrock|foundry)
+      if [[ "$provider" != "$CLAUDE_AUTH_MODE_SELECTION" \
+         || "$auth_method" != third_party ]]; then
+        echo "Claude verifier provider does not match VERIFY_CLAUDE_AUTH_MODE=$CLAUDE_AUTH_MODE_SELECTION." >&2
+        exit 1
+      fi
+      ;;
+  esac
 
   if [[ "$provider" == vertex ]]; then
     if [[ -z "${ANTHROPIC_DEFAULT_OPUS_MODEL:-}" \
@@ -228,7 +361,7 @@ PY
         gcloud_command="$(command -v "$GCLOUD_SELECTION" || true)"
       fi
       if [[ -n "$gcloud_command" ]]; then
-        gcloud_target="$(realpath "$gcloud_command" || true)"
+        gcloud_target="$(resolve_executable "$gcloud_command" 2>/dev/null || true)"
         if [[ "$gcloud_target" != /* || ! -f "$gcloud_target" \
            || -L "$gcloud_target" || ! -x "$gcloud_target" ]]; then
           echo "Vertex gcloud ADC preflight executable is unsafe." >&2
@@ -250,6 +383,8 @@ PY
         exit 1
       fi
     fi
+  elif [[ "$provider" == anthropic ]]; then
+    provider_model="${VERIFY_CLAUDE_PROVIDER_MODEL:-$selected_claude_launch_model}"
   else
     provider_model="${VERIFY_CLAUDE_PROVIDER_MODEL:-${ANTHROPIC_DEFAULT_OPUS_MODEL:-}}"
     if [[ -z "$provider_model" ]]; then
@@ -261,11 +396,14 @@ PY
   export VERIFY_CLAUDE_BIN="$claude_target"
   export VERIFY_CLAUDE_BIN_SHA256="$claude_sha256"
   export VERIFY_CLAUDE_PROVIDER="$provider"
+  export VERIFY_CLAUDE_AUTH_MODE="$CLAUDE_AUTH_MODE_SELECTION"
+  export VERIFY_CLAUDE_AUTH_METHOD="$auth_method"
+  export VERIFY_CLAUDE_SUBSCRIPTION_TYPE="$subscription_type"
   export VERIFY_CLAUDE_MODEL="$selected_claude_model"
   export VERIFY_CLAUDE_LAUNCH_MODEL="$selected_claude_launch_model"
   export VERIFY_CLAUDE_REASONING_EFFORT="${VERIFY_CLAUDE_REASONING_EFFORT:-max}"
   export VERIFY_CLAUDE_PROVIDER_MODEL="$provider_model"
-  unset auth_json provider_model claude_command claude_target claude_sha256 selected_claude_model selected_claude_launch_model
+  unset auth_json auth_binding_json provider_model claude_command claude_target claude_sha256 selected_claude_model selected_claude_launch_model
 fi
 
 command=(
@@ -276,6 +414,9 @@ command=(
 )
 
 echo "Verifier profile: $PROFILE"
+if [[ "$PROFILE" == max_diversity ]]; then
+  echo "Claude verifier auth mode/method: ${VERIFY_CLAUDE_AUTH_MODE}/${VERIFY_CLAUDE_AUTH_METHOD}"
+fi
 primary_default_effort="${CODEX_REASONING_EFFORT:-xhigh}"
 if [[ "$PROFILE" == max_diversity && -z "${CODEX_REASONING_EFFORT:-}" ]]; then
   primary_default_effort="max"

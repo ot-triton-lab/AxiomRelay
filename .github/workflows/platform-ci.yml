@@ -1,0 +1,91 @@
+name: Platform CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  linux-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install Bash 5 on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install bash
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+
+      - name: Install Codex without invoking a model
+        run: npm install --global @openai/codex
+
+      - name: Create clean Python environments
+        run: |
+          python -m venv agents/verification/.venv
+          agents/verification/.venv/bin/pip install \
+            -r agents/verification/requirements.txt
+          python -m venv --copies --without-pip agents/.generation-venv
+          uv pip install --python agents/.generation-venv/bin/python \
+            -r agents/generation/requirements-dev.txt
+
+      - name: Clean-install and generated-source checks
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          agents/verification/.venv/bin/python -I -B -c \
+            'import sys; sys.path.insert(0, "agents/verification"); import api.server'
+          agents/.generation-venv/bin/python -B \
+            agents/generation/mcp/build_legacy_server.py --check
+          bash -n agents/generation/tests/run_example.sh
+          bash -n agents/generation/tests/run_claude_core.sh
+          bash -n agents/generation/tests/run_legacy.sh
+          bash -n agents/generation/tests/run_hotjoin.sh
+          bash -n agents/verification/scripts/run_verifier.sh
+
+      - name: Exercise the native Codex permission profile
+        run: |
+          probe_root="$RUNNER_TEMP/axiom-relay-sandbox"
+          mkdir -p "$probe_root/allowed" "$probe_root/denied"
+          printf ok > "$probe_root/allowed/input"
+          printf no > "$probe_root/denied/secret"
+          codex_path="$(python -c 'import pathlib,shutil; print(pathlib.Path(shutil.which("codex")).resolve())')"
+          filesystem="$(python -c 'import json,sys; root,codex=sys.argv[1:]; print("{\":minimal\"=\"read\","+json.dumps(codex)+"=\"read\","+json.dumps(root+"/allowed")+"=\"write\","+json.dumps(root+"/denied")+"=\"deny\"}")' "$probe_root" "$codex_path")"
+          codex sandbox --permission-profile axiom-ci \
+            -c "permissions.axiom-ci.filesystem=$filesystem" \
+            -c 'permissions.axiom-ci.network.enabled=false' \
+            -C "$probe_root/allowed" -- /bin/sh -c \
+            'test "$(cat "$1")" = ok && test ! -r "$2" && : > "$3"' \
+            axiom-ci "$probe_root/allowed/input" "$probe_root/denied/secret" \
+            "$probe_root/allowed/output"
+          test -f "$probe_root/allowed/output"
+
+      - name: Run platform-sensitive tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          agents/verification/.venv/bin/python -m pytest -q \
+            agents/verification/tests/test_api_server.py
+          agents/.generation-venv/bin/python -m pytest -q \
+            agents/generation/tests/test_claude_core.py \
+            agents/generation/tests/test_verification_client.py \
+            agents/generation/tests/test_runner_mock.py

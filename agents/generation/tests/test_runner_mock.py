@@ -890,6 +890,44 @@ if calls_file:
     with pathlib.Path(calls_file).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(sys.argv) + "\\n")
 isolation_probe = os.environ.get("MOCK_CODEX_ISOLATION_PROBE_FILE")
+permission_configs = [
+    value
+    for index, value in enumerate(sys.argv)
+    if index > 0 and sys.argv[index - 1] == "--config"
+]
+macos_cohort_profile = any(
+    value == 'default_permissions="axiom-relay-cohort"'
+    for value in permission_configs
+)
+if isolation_probe and "exec" in sys.argv and macos_cohort_profile:
+    pathlib.Path(isolation_probe).write_text(
+        json.dumps(
+            {
+                "current_problem": True,
+                "current_plan": True,
+                "current_candidate_projection": True,
+                "current_memory": True,
+                "current_results": True,
+                "other_problem": False,
+                "other_plan": False,
+                "other_statement_candidate_projection": False,
+                "other_problem_candidate_projection": False,
+                "other_memory": False,
+                "other_results": False,
+                "old_log": False,
+                "host_claude_state": False,
+                "git_history": False,
+                "codex_auth_write_succeeded": True,
+                "codex_history": False,
+                "codex_models_cache": False,
+                "claude_history": False,
+                "root_home_is_private_tmpfs": False,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    isolation_probe = None
 if isolation_probe and "exec" in sys.argv:
     root = pathlib.Path.cwd()
     expected_plan = pathlib.Path(os.environ["MOCK_CODEX_EXPECTED_PLAN"])
@@ -965,6 +1003,13 @@ if sys.argv[1:] == ["login", "status"]:
         raise SystemExit(0)
     print("Not logged in")
     raise SystemExit(1)
+if sys.argv[1:2] == ["sandbox"]:
+    separator = sys.argv.index("--")
+    probe_arguments = sys.argv[separator + 1 :]
+    assert probe_arguments[:2] == ["/bin/sh", "-c"]
+    assert len(probe_arguments) >= 6
+    pathlib.Path(probe_arguments[-1]).write_text("ready", encoding="utf-8")
+    raise SystemExit(0)
 if "exec" in sys.argv and os.environ.get("MOCK_CODEX_DEFERRED_FRONTIER_SECONDS"):
     deferred_environment = dict(os.environ)
     deferred_environment["MOCK_CODEX_DEFERRED_CHILD"] = "1"
@@ -977,7 +1022,11 @@ if "exec" in sys.argv and os.environ.get("MOCK_CODEX_DEFERRED_FRONTIER_SECONDS")
     print("foreground Codex turn returned before its collaboration continuation")
     raise SystemExit(0)
 assert "--dangerously-bypass-approvals-and-sandbox" not in sys.argv
-assert sys.argv[sys.argv.index("--sandbox") + 1] == "workspace-write"
+if macos_cohort_profile:
+    assert "--sandbox" not in sys.argv
+    assert 'permissions.axiom-relay-cohort.network.enabled=false' in permission_configs
+else:
+    assert sys.argv[sys.argv.index("--sandbox") + 1] == "workspace-write"
 if os.environ.get("RETHLAS_RUN_MODE") in {"core", "legacy"}:
     assert "--strict-config" in sys.argv
     assert "--ignore-user-config" in sys.argv
@@ -1561,7 +1610,16 @@ if sys.argv[1:] == ["auth", "status"]:
     else:
         provider = "anthropic"
     provider = os.environ.get("MOCK_CLAUDE_API_PROVIDER", provider)
-    print(json.dumps({{"loggedIn": logged_in, "authMethod": "third_party", "apiProvider": provider}}))
+    auth_method = os.environ.get("MOCK_CLAUDE_AUTH_METHOD", "third_party")
+    subscription_type = os.environ.get("MOCK_CLAUDE_SUBSCRIPTION_TYPE")
+    status = {{
+        "loggedIn": logged_in,
+        "authMethod": auth_method,
+        "apiProvider": provider,
+    }}
+    if subscription_type is not None:
+        status["subscriptionType"] = subscription_type
+    print(json.dumps(status))
     raise SystemExit(0 if logged_in else 1)
 calls_file = os.environ.get("MOCK_CLAUDE_CALLS_FILE")
 if calls_file:
@@ -1685,6 +1743,7 @@ def _mock_environment(
         "AXIOM_RELAY_CLAUDE_TAKEOVER_FROM",
         "AXIOM_RELAY_CLAUDE_OWNER_PROMPT",
         "AXIOM_RELAY_CLAUDE_CONTEXT_WINDOW",
+        "AXIOM_RELAY_CLAUDE_AUTH_MODE",
     ):
         environment.pop(name, None)
     environment.pop("RETHLAS_RUN_MODE", None)
@@ -1713,7 +1772,13 @@ def _mock_environment(
     environment.pop("RETHLAS_COHORT_HOST_SOURCE_SNAPSHOT", None)
     environment.pop("CLAUDE_CODE_MAX_OUTPUT_TOKENS", None)
     environment.pop("CLAUDE_CODE_EXTRA_BODY", None)
+    environment.pop("CLAUDE_CONFIG_DIR", None)
     environment.pop("CLAUDE_CODE_USE_VERTEX", None)
+    environment.pop("CLAUDE_CODE_USE_BEDROCK", None)
+    environment.pop("CLAUDE_CODE_USE_FOUNDRY", None)
+    environment.pop("ANTHROPIC_API_KEY", None)
+    environment.pop("ANTHROPIC_AUTH_TOKEN", None)
+    environment.pop("ANTHROPIC_BASE_URL", None)
     environment.pop("ANTHROPIC_VERTEX_PROJECT_ID", None)
     environment.pop("CLOUD_ML_REGION", None)
     environment.pop("ANTHROPIC_DEFAULT_OPUS_MODEL", None)
@@ -3545,6 +3610,9 @@ def _cadence_environment(
     max_iterations: int = 2,
     extra_environment: dict[str, str] | None = None,
 ) -> dict[str, str]:
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_curl.chmod(0o755)
     environment = _mock_environment(
         runner,
         fake_bin,
@@ -4116,10 +4184,7 @@ def test_inflight_root_launcher_pins_loaded_inode_across_atomic_replacement(
     entered = tmp_path / "launcher-a-entered.marker"
     release = tmp_path / "launcher-a-release.marker"
     original = launcher.read_text(encoding="utf-8")
-    needle = (
-        'root_launcher_image_path="/proc/${root_launcher_shell_pid}/fd/'
-        '${root_launcher_image_fd}"\n'
-    )
+    needle = 'root_launcher_image_path="$descriptor_root/${root_launcher_image_fd}"\n'
     barrier = (
         'if [[ -n "${LAUNCHER_A_ENTERED:-}" && -n '
         '"${LAUNCHER_A_RELEASE:-}" ]]; then\n'
@@ -4504,6 +4569,129 @@ def test_claude_root_projects_only_selected_allowlisted_vertex_user_settings(
     assert "private-project-marker" not in completed.stdout + completed.stderr
     assert "must-not-project-unused-model" not in completed.stdout + completed.stderr
     assert "must-not-be-projected" not in completed.stdout + completed.stderr
+
+
+def test_claude_root_subscription_uses_dedicated_config_directory(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    fake_home = tmp_path / "home"
+    home_settings = fake_home / ".claude" / "settings.json"
+    home_settings.parent.mkdir(parents=True)
+    home_settings.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "CLAUDE_CODE_USE_VERTEX": "1",
+                    "ANTHROPIC_VERTEX_PROJECT_ID": "must-not-leak",
+                    "CLOUD_ML_REGION": "global",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "must-not-leak",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    dedicated_config = tmp_path / "subscription-claude"
+    dedicated_config.mkdir()
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "HOME": str(fake_home),
+            "CLAUDE_CONFIG_DIR": str(dedicated_config),
+            "RETHLAS_RUN_MODE": "core",
+            "RETHLAS_MAIN_AGENT": "opus",
+            "RETHLAS_CLAUDE_ROOT_PRINT_CMD": "1",
+            "AXIOM_RELAY_CLAUDE_AUTH_MODE": "subscription",
+        },
+    )
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "Claude provider projection: cli-default" in completed.stdout
+    assert "Claude provider: anthropic" in completed.stdout
+    assert "must-not-leak" not in completed.stdout + completed.stderr
+
+
+def test_claude_root_subscription_binds_auth_method_before_paid_turn(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_curl.chmod(0o755)
+    claude_calls = tmp_path / "claude-calls.jsonl"
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "RETHLAS_RUN_MODE": "core",
+            "RETHLAS_MAIN_AGENT": "opus",
+            "AXIOM_RELAY_CLAUDE_AUTH_MODE": "subscription",
+            "MOCK_CLAUDE_AUTH_METHOD": "claude.ai",
+            "MOCK_CLAUDE_SUBSCRIPTION_TYPE": "max",
+            "MOCK_CLAUDE_CALLS_FILE": str(claude_calls),
+        },
+    )
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "Claude auth mode/method: subscription/claude.ai" in completed.stdout
+    assert len(claude_calls.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_claude_root_subscription_rejects_stored_api_auth_before_paid_turn(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    claude_calls = tmp_path / "claude-calls.jsonl"
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "RETHLAS_RUN_MODE": "core",
+            "RETHLAS_MAIN_AGENT": "opus",
+            "AXIOM_RELAY_CLAUDE_AUTH_MODE": "subscription",
+            "MOCK_CLAUDE_AUTH_METHOD": "api_key",
+            "MOCK_CLAUDE_CALLS_FILE": str(claude_calls),
+        },
+    )
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "bound provider/auth mode" in completed.stderr
+    assert not claude_calls.exists()
+    assert not (runner.parents[1].parent / ".claude_core").exists()
 
 
 def test_claude_root_completes_partial_inherited_vertex_binding_from_launch_model(
@@ -6251,6 +6439,20 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
             "RETHLAS_BOUND_EXTERNAL_PLAN_ROOT_SESSION_ID"
         ] == root_session_id
     assert "--skip-git-repo-check" in root_call
+    root_configs = [
+        value
+        for index, value in enumerate(root_call)
+        if index > 0 and root_call[index - 1] == "--config"
+    ]
+    if sys.platform == "darwin":
+        assert "--sandbox" not in root_call
+        assert 'default_permissions="axiom-relay-cohort"' in root_configs
+        assert (
+            'permissions.axiom-relay-cohort.network.enabled=false'
+            in root_configs
+        )
+    else:
+        assert root_call[root_call.index("--sandbox") + 1] == "workspace-write"
     probe = json.loads(isolation_probe.read_text(encoding="utf-8"))
     assert probe == {
         "claude_history": False,
@@ -6271,7 +6473,7 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
         "other_problem": False,
         "other_results": False,
         "other_statement_candidate_projection": False,
-        "root_home_is_private_tmpfs": True,
+        "root_home_is_private_tmpfs": sys.platform.startswith("linux"),
     }
     assert host_auth.read_text(encoding="utf-8") == "host auth sentinel"
     if expected_mode == "matlas_arxiv":

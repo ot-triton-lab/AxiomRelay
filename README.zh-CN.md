@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-**Proof hill climbing for hard mathematics.**
+**A proof hill-climbing system for hard mathematical problems.**
 
 保留已经核过的部分，一次只修一个 gap。
 
@@ -141,6 +141,19 @@ Claude root 目前只能用于 `core` 模式。它只能查看只读 workspace�
 
 ## 快速开始
 
+AxiomRelay 支持 Linux 和 macOS。Python 版本必须是 3.11、3.12 或 3.13，
+Bash 则需要 5.0 以上。macOS 自带的 Bash 太旧，先安装新版并把它放到
+`PATH` 前面：
+
+```bash
+brew install bash uv
+export PATH="$(brew --prefix)/bin:$PATH"
+```
+
+Linux 上的外部 proof lane 使用无特权的 mount/PID namespace；macOS 上改用
+Codex 自带的 Seatbelt permission profile。两种平台都会在第一次付费调用前
+做一次不调用模型的隔离测试。
+
 ### 1. 克隆仓库并安装 CLI
 
 ```bash
@@ -150,6 +163,12 @@ npm install -g @openai/codex
 ```
 
 开始运行题目之前，先完成 Codex 认证。如果要使用 Claude root 或 `max_diversity` 验证，还需安装并登录 Claude Code。
+Claude 不限定某一家 provider：默认的 `auto` 跟随当前 CLI 登录状态。如果一台
+机器同时配置了 Vertex、Bedrock、Foundry 或 API key，但某次 root 必须使用
+Claude 订阅 OAuth，可显式设置 `AXIOM_RELAY_CLAUDE_AUTH_MODE=subscription`。
+Verifier 对应的变量是 `VERIFY_CLAUDE_AUTH_MODE`。显式选择模式后，启动器会同时
+核对 provider 和 Claude CLI 报告的认证方式；`subscription` 还要求 CLI 返回订阅
+类型。任何一项对不上，都会在调用模型之前停止。
 
 ### 2. 创建 Python 环境
 
@@ -158,7 +177,7 @@ npm install -g @openai/codex
 ```bash
 python3 -m venv agents/verification/.venv
 agents/verification/.venv/bin/pip install \
-  -r agents/verification/api/requirements.txt
+  -r agents/verification/requirements.txt
 ```
 
 为生成端创建环境：
@@ -166,7 +185,7 @@ agents/verification/.venv/bin/pip install \
 ```bash
 python3 -m venv --copies --without-pip agents/.generation-venv
 uv pip install --python agents/.generation-venv/bin/python \
-  -r agents/generation/requirements-math-research.txt
+  -r agents/generation/requirements-dev.txt
 ```
 
 生成端故意使用复制出来的 Python 解释器。Runner 会核验解释器及可信源码闭包。如果发现可执行的 `.pth` hook，会在触发付费调用前直接拒绝运行。
@@ -193,7 +212,23 @@ AXIOM_RELAY_VERIFIER_PRINT_COMMAND=1 \
 ./scripts/run_verifier.sh
 ```
 
-服务默认通过 HTTP 监听本机 loopback 的 `8091` 端口。部署到远程主机时，必须启用 HTTPS，并设置高熵的 `VERIFY_API_TOKEN`。
+服务默认通过 HTTP 监听本机 loopback 的 `8091` 端口。正式跑题前应检查
+`/ready`，不能只看进程是否还活着：
+
+```bash
+curl -fsS http://127.0.0.1:8091/ready
+```
+
+这个检查不会调用模型。它会核对 CLI 和认证状态、MCP/runtime import、持久化
+目录、当前平台需要的系统能力，并实际跑一次 Codex sandbox probe。
+
+远程部署时，必须先在反向代理等上游终止 HTTPS，并使用至少 256 bit 的随机
+token；本服务本身不负责 TLS：
+
+```bash
+export VERIFY_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+export VERIFY_TLS_TERMINATED=1
+```
 
 ### 4. 运行题目
 
@@ -241,7 +276,7 @@ PROBLEM_FILE=data/my_problem.md \
 ```bash
 PROBLEM_PATH=agents/generation/data/my_problem.md
 PROBLEM_ID=my_problem
-STATEMENT_SHA256="$(sha256sum "$PROBLEM_PATH" | cut -d' ' -f1)"
+STATEMENT_SHA256="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$PROBLEM_PATH")"
 
 agents/.generation-venv/bin/python -I -B agents/claude_core.py \
   --prepare-pro-gap-query \
@@ -304,7 +339,7 @@ agents/.generation-venv/bin/python -I -B agents/claude_core.py \
 ```bash
 PROBLEM_PATH=agents/generation/data/my_problem.md
 PROBLEM_ID=my_problem
-STATEMENT_SHA256="$(sha256sum "$PROBLEM_PATH" | cut -d' ' -f1)"
+STATEMENT_SHA256="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$PROBLEM_PATH")"
 
 agents/.generation-venv/bin/python -I -B agents/claude_core.py \
   --ingest-reference-candidate \
@@ -360,10 +395,14 @@ PROBLEM_FILE=data/my_problem.md \
 | `AXIOM_RELAY_CLAUDE_TAKEOVER_FROM` | 显式 fence 并接管一个可恢复的 Claude root |
 | `AXIOM_RELAY_CLAUDE_OWNER_PROMPT` | 恢复或接管时发给 Claude root 的 operator message |
 | `AXIOM_RELAY_CLAUDE_CONTEXT_WINDOW` | Claude 上下文窗口，Opus 默认 1M |
+| `AXIOM_RELAY_CLAUDE_AUTH_MODE` | Claude root 的认证方式：`auto`、`subscription`、`api`、`vertex`、`bedrock` 或 `foundry` |
 | `AXIOM_RELAY_PRINT_COMMAND` | 只打印 Claude root 启动命令，不执行 |
 | `PROBLEM_FILE` | `agents/generation/data/` 下的安全 Markdown 路径 |
-| `VERIFY_HEALTH_URL`、`VERIFY_PROOF_URL` | Verifier 服务地址 |
+| `CLAUDE_CONFIG_DIR` | Claude root 使用的可选配置目录 |
+| `VERIFY_READY_URL`、`VERIFY_PROOF_URL` | Verifier readiness 和 proof 地址 |
+| `VERIFY_CLAUDE_AUTH_MODE` | Verifier 使用的 Claude 认证方式；选项与上面相同 |
 | `VERIFY_API_TOKEN` | 非 loopback 验证必须提供的 bearer token |
+| `VERIFY_TLS_TERMINATED` | 非 loopback verifier 位于可信 TLS 终止层之后时必须设为 `1` |
 
 旧的环境变量名、schema 标识和 receipts 会在一个过渡版本内继续保持可读取、可解析。新脚本应使用上表中的名称。历史 receipt 必须保留原始字节，不能只为改品牌名而重写。
 

@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -266,6 +267,10 @@ def test_targeted_snapshot_rejects_npm_style_codex_script_launcher(
         _REAL_TARGETED_CODEX_EXECUTABLE()
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="Linux targeted snapshots require a static ELF executable",
+)
 def test_targeted_snapshot_rejects_dynamically_linked_native_codex(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -273,6 +278,49 @@ def test_targeted_snapshot_rejects_dynamically_linked_native_codex(
 
     with pytest.raises(RuntimeError, match="statically linked"):
         _REAL_TARGETED_CODEX_EXECUTABLE()
+
+
+def _thin_macho(*, command: int, payload: bytes = b"") -> bytes:
+    command_size = 8 + len(payload)
+    if command_size % 8:
+        command_size += 8 - command_size % 8
+    command_bytes = struct.pack("<II", command, command_size) + payload
+    command_bytes += b"\0" * (command_size - len(command_bytes))
+    return struct.pack(
+        "<8I",
+        0xFEEDFACF,
+        0x01000007,
+        3,
+        2,
+        1,
+        command_size,
+        0,
+        0,
+    ) + command_bytes
+
+
+def test_targeted_macho_accepts_system_loader_dependency(tmp_path: Path) -> None:
+    loader = b"/usr/lib/dyld\0"
+    image = _thin_macho(command=0xE, payload=struct.pack("<I", 12) + loader)
+    executable = tmp_path / "codex"
+    executable.write_bytes(image)
+    descriptor = os.open(executable, os.O_RDONLY)
+    try:
+        server._validate_targeted_macho(descriptor, len(image))
+    finally:
+        os.close(descriptor)
+
+
+def test_targeted_macho_rejects_loader_override(tmp_path: Path) -> None:
+    image = _thin_macho(command=0x1C | 0x80000000)
+    executable = tmp_path / "codex"
+    executable.write_bytes(image)
+    descriptor = os.open(executable, os.O_RDONLY)
+    try:
+        with pytest.raises(RuntimeError, match="unsafe loader override"):
+            server._validate_targeted_macho(descriptor, len(image))
+    finally:
+        os.close(descriptor)
 
 
 def test_targeted_execution_snapshot_has_private_inodes_and_survives_live_rewrites(
@@ -3629,6 +3677,43 @@ def test_health_exposes_effective_claude_liveness_controls() -> None:
     }
 
 
+def test_claude_subscription_auth_binding_requires_subscription_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "VERIFY_CLAUDE_AUTH_MODE", "subscription")
+    monkeypatch.setattr(server, "VERIFY_CLAUDE_AUTH_METHOD", "claude.ai")
+    monkeypatch.setattr(server, "VERIFY_CLAUDE_SUBSCRIPTION_TYPE", "max")
+
+    assert server._claude_auth_binding_matches(
+        {"authMethod": "claude.ai", "subscriptionType": "max"},
+        expected_provider="anthropic",
+    )
+    assert not server._claude_auth_binding_matches(
+        {"authMethod": "api_key", "subscriptionType": "max"},
+        expected_provider="anthropic",
+    )
+    assert not server._claude_auth_binding_matches(
+        {"authMethod": "claude.ai", "subscriptionType": "pro"},
+        expected_provider="anthropic",
+    )
+
+
+def test_claude_cloud_auth_binding_requires_third_party_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "VERIFY_CLAUDE_AUTH_MODE", "vertex")
+    monkeypatch.setattr(server, "VERIFY_CLAUDE_AUTH_METHOD", "third_party")
+    monkeypatch.setattr(server, "VERIFY_CLAUDE_SUBSCRIPTION_TYPE", "")
+
+    assert server._claude_auth_binding_matches(
+        {"authMethod": "third_party"}, expected_provider="vertex"
+    )
+    assert not server._claude_auth_binding_matches(
+        {"authMethod": "claude.ai", "subscriptionType": "max"},
+        expected_provider="vertex",
+    )
+
+
 def test_cold_claude_auth_mismatch_starts_zero_model_calls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5584,6 +5669,7 @@ def test_remote_request_is_rejected_by_middleware_before_body_parsing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(server, "VERIFY_API_TOKEN", "")
+    monkeypatch.setattr(server, "VERIFY_TLS_TERMINATED", True)
     monkeypatch.setattr(server, "_loopback_client", lambda request: False)
     response = TestClient(server.app).post(
         "/verify",
@@ -5598,6 +5684,7 @@ def test_remote_whole_status_requires_api_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(server, "VERIFY_API_TOKEN", "")
+    monkeypatch.setattr(server, "VERIFY_TLS_TERMINATED", True)
     monkeypatch.setattr(server, "_loopback_client", lambda request: False)
     response = TestClient(server.app).get(
         "/verify/status/veratt_" + "a" * 32,
@@ -5605,6 +5692,91 @@ def test_remote_whole_status_requires_api_token(
     )
     assert response.status_code == 403
     assert "require VERIFY_API_TOKEN" in response.json()["detail"]
+
+
+def test_remote_verification_requires_tls_before_reading_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "VERIFY_API_TOKEN", "a" * 64)
+    monkeypatch.setattr(server, "VERIFY_TLS_TERMINATED", False)
+    monkeypatch.setattr(server, "_loopback_client", lambda request: False)
+    response = TestClient(server.app).post(
+        "/verify",
+        content=b"this is not JSON",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "remote verification requires TLS termination"
+
+
+@pytest.mark.parametrize(
+    ("token", "accepted"),
+    [
+        ("x", False),
+        ("00" * 32, False),
+        (bytes(range(32)).hex(), True),
+        ("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", True),
+    ],
+)
+def test_remote_token_requires_256_bits_of_random_material(
+    token: str, accepted: bool
+) -> None:
+    assert server._api_token_has_256_bits(token) is accepted
+
+
+def test_readiness_runs_zero_model_runtime_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(server, "RESULTS_ROOT", tmp_path / "results")
+    monkeypatch.setattr(
+        server, "TARGETED_CONTROL_ROOT", tmp_path / "targeted-control"
+    )
+    monkeypatch.setattr(server, "VERIFIER_BACKENDS", {})
+    monkeypatch.setattr(server, "VERIFY_SERVER_HOST", "127.0.0.1")
+
+    calls: list[list[str]] = []
+
+    def fake_run(arguments: list[str], **_kwargs: Any) -> SimpleNamespace:
+        calls.append(arguments)
+        if "sandbox" in arguments:
+            Path(arguments[-1]).write_text("ready", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    body, status_code = server._compute_readiness()
+
+    assert status_code == 200
+    assert body["status"] == "ready"
+    assert body["failed_checks"] == []
+    assert all(body["checks"].values())
+    assert any(arguments[-2:] == ["login", "status"] for arguments in calls)
+    assert any("sandbox" in arguments for arguments in calls)
+
+
+def test_readiness_fails_closed_for_remote_weak_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(server, "RESULTS_ROOT", tmp_path / "results")
+    monkeypatch.setattr(
+        server, "TARGETED_CONTROL_ROOT", tmp_path / "targeted-control"
+    )
+    monkeypatch.setattr(server, "VERIFIER_BACKENDS", {})
+    monkeypatch.setattr(server, "VERIFY_SERVER_HOST", "0.0.0.0")
+    monkeypatch.setattr(server, "VERIFY_TLS_TERMINATED", False)
+    monkeypatch.setattr(server, "VERIFY_API_TOKEN", "x")
+
+    def fake_run(arguments: list[str], **_kwargs: Any) -> SimpleNamespace:
+        if "sandbox" in arguments:
+            Path(arguments[-1]).write_text("ready", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    body, status_code = server._compute_readiness()
+
+    assert status_code == 503
+    assert body["status"] == "not_ready"
+    assert body["checks"]["remote_transport"] is False
+    assert body["failed_checks"] == ["remote_transport"]
 
 
 def test_whole_status_bypasses_model_admission_slot(

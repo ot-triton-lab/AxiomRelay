@@ -1473,26 +1473,43 @@ def _atomic_replace_at(
 def _renameat2_at(
     directory_fd: int, source: str, destination: str, flags: int
 ) -> None:
-    """Invoke Linux renameat2 without falling back to an unsafe blind rename."""
+    """Invoke the host's race-safe relative rename primitive."""
 
-    try:
-        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
-    except AttributeError as exc:  # pragma: no cover - supported hosts are Linux
-        raise OSError(errno.ENOSYS, "renameat2 is unavailable") from exc
-    renameat2.argtypes = (
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        try:
+            rename = libc.renameatx_np
+        except AttributeError as exc:
+            raise OSError(errno.ENOSYS, "renameatx_np is unavailable") from exc
+        platform_flags = {
+            0: 0,
+            _RENAME_NOREPLACE: 0x00000004,  # RENAME_EXCL
+            _RENAME_EXCHANGE: 0x00000002,  # RENAME_SWAP
+        }.get(flags)
+        if platform_flags is None:
+            raise OSError(errno.EINVAL, "unsupported atomic rename flags")
+    elif sys.platform.startswith("linux"):
+        try:
+            rename = libc.renameat2
+        except AttributeError as exc:
+            raise OSError(errno.ENOSYS, "renameat2 is unavailable") from exc
+        platform_flags = flags
+    else:
+        raise OSError(errno.ENOSYS, "atomic relative rename is unavailable")
+    rename.argtypes = (
         ctypes.c_int,
         ctypes.c_char_p,
         ctypes.c_int,
         ctypes.c_char_p,
         ctypes.c_uint,
     )
-    renameat2.restype = ctypes.c_int
-    result = renameat2(
+    rename.restype = ctypes.c_int
+    result = rename(
         directory_fd,
         os.fsencode(source),
         directory_fd,
         os.fsencode(destination),
-        flags,
+        platform_flags,
     )
     if result != 0:
         error = ctypes.get_errno()

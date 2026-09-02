@@ -34,6 +34,48 @@ class FakeResponse:
         return self.payload
 
 
+@pytest.mark.parametrize(
+    ("logical_flags", "darwin_flags"),
+    [
+        (client._RENAME_NOREPLACE, 0x00000004),
+        (client._RENAME_EXCHANGE, 0x00000002),
+    ],
+)
+def test_darwin_atomic_rename_maps_native_flags(
+    logical_flags: int,
+    darwin_flags: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class FakeRename:
+        argtypes: object = None
+        restype: object = None
+
+        def __call__(self, *arguments: object) -> int:
+            calls.append(arguments)
+            return 0
+
+    class FakeLibc:
+        renameatx_np = FakeRename()
+
+    monkeypatch.setattr(client.sys, "platform", "darwin")
+    monkeypatch.setattr(client.ctypes, "CDLL", lambda *_args, **_kwargs: FakeLibc())
+
+    client._renameat2_at(17, "from", "to", logical_flags)
+
+    assert len(calls) == 1
+    assert calls[0] == (17, b"from", 17, b"to", darwin_flags)
+
+
+def test_atomic_rename_rejects_unsupported_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client.sys, "platform", "win32")
+    with pytest.raises(OSError, match="atomic relative rename is unavailable"):
+        client._renameat2_at(17, "from", "to", client._RENAME_NOREPLACE)
+
+
 def test_publication_lock_wait_is_bounded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

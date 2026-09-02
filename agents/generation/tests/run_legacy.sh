@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if (( BASH_VERSINFO[0] < 5 )); then
+  echo "AxiomRelay requires Bash 5 or newer (macOS: brew install bash)." >&2
+  exit 1
+fi
+
+descriptor_root=""
+for candidate in /proc/self/fd /dev/fd; do
+  if [[ -d "$candidate" ]]; then
+    descriptor_root="$candidate"
+    break
+  fi
+done
+if [[ -z "$descriptor_root" ]]; then
+  echo "Could not locate a descriptor filesystem (/proc/self/fd or /dev/fd)." >&2
+  exit 70
+fi
+
 OWNED_RUNNER_ORIGIN="${RETHLAS_OWNED_EXECUTABLE_ORIGIN:-}"
 OWNED_RUNNER_FD="${RETHLAS_OWNED_EXECUTABLE_FD:-}"
 OWNED_RUNNER_SHA256="${RETHLAS_OWNED_EXECUTABLE_SHA256:-}"
@@ -9,7 +26,7 @@ if [[ -n "$OWNED_RUNNER_ORIGIN" || -n "$OWNED_RUNNER_FD" \
   if [[ "$OWNED_RUNNER_ORIGIN" != /* \
      || ! "$OWNED_RUNNER_FD" =~ ^[0-9]+$ \
      || ! "$OWNED_RUNNER_SHA256" =~ ^[0-9a-f]{64}$ \
-     || ! -r "/proc/self/fd/$OWNED_RUNNER_FD" ]]; then
+     || ! -r "$descriptor_root/$OWNED_RUNNER_FD" ]]; then
     echo "Owned legacy runner binding is invalid." >&2
     exit 70
   fi
@@ -18,7 +35,7 @@ if [[ -n "$OWNED_RUNNER_ORIGIN" || -n "$OWNED_RUNNER_FD" \
     echo "Owned legacy runner origin differs from the generation runtime." >&2
     exit 70
   fi
-  LEGACY_RUNNER_SOURCE="/proc/self/fd/$OWNED_RUNNER_FD"
+  LEGACY_RUNNER_SOURCE="$descriptor_root/$OWNED_RUNNER_FD"
 else
   ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
   LEGACY_RUNNER_SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
@@ -119,6 +136,8 @@ EXTERNAL_PLAN_RELATIVE=""
 EXTERNAL_PLAN_ROOT_SESSION_ID=""
 EXTERNAL_RETRIEVAL_MODE="disabled"
 COHORT_NAMESPACE_PROGRAM=""
+COHORT_ISOLATION_BACKEND=""
+COHORT_PERMISSION_CONFIG_ARGS=()
 
 # The generation runtime is content-attested below. Never create interpreter
 # caches in that trusted tree: bytecode is executable input, not a disposable
@@ -147,14 +166,10 @@ if [[ "$python_command" != /* ]] || [[ ! -x "$python_command" ]]; then
   echo "Generation python3 must resolve to an absolute executable path." >&2
   exit 1
 fi
-if ! command -v realpath >/dev/null 2>&1; then
-  echo "realpath is required to validate the generation Python environment." >&2
-  exit 1
-fi
 TRUSTED_PYTHON_BIN="$(cd "$(dirname "$python_command")" && pwd -P)/$(basename "$python_command")"
 unset RETHLAS_COST_GATE_POLICY RETHLAS_RESOLVED_COST_POLICY_JSON
 unset RETHLAS_RESOLVED_COST_POLICY_SHA256
-python_target="$(realpath "$TRUSTED_PYTHON_BIN")"
+python_target="$TRUSTED_PYTHON_BIN"
 temporary_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
 for candidate in "$TRUSTED_PYTHON_BIN" "$python_target"; do
   if [[ "$candidate" == "$ROOT_DIR" || "$candidate" == "$ROOT_DIR"/* \
@@ -163,7 +178,8 @@ for candidate in "$TRUSTED_PYTHON_BIN" "$python_target"; do
     exit 1
   fi
 done
-if [[ "$TRUSTED_PYTHON_BIN" != "$python_target" ]]; then
+if [[ -L "$TRUSTED_PYTHON_BIN" \
+   || "$TRUSTED_PYTHON_BIN" != "$python_target" ]]; then
   echo "Guardian requires a non-symlink Python interpreter; recreate the external generation environment with: python3 -m venv --copies <path>" >&2
   exit 1
 fi
@@ -665,7 +681,7 @@ root = Path(sys.argv[1]).resolve(strict=True)
 runner_source_argument = Path(sys.argv[2]).absolute()
 runner_source = (
     runner_source_argument
-    if str(runner_source_argument).startswith("/proc/self/fd/")
+    if str(runner_source_argument).startswith(("/proc/self/fd/", "/dev/fd/"))
     else runner_source_argument.resolve(strict=True)
 )
 expected_runner_sha256 = sys.argv[3]
@@ -717,7 +733,7 @@ for path, logical_path in explicit:
         metadata = (
             path.stat()
             if logical_path == Path("tests/run_legacy.sh")
-            and str(path).startswith("/proc/self/fd/")
+            and str(path).startswith(("/proc/self/fd/", "/dev/fd/"))
             else path.lstat()
         )
     except OSError as exc:
@@ -1900,12 +1916,12 @@ if [[ -n "$COHORT_CODEX_FD" ]]; then
      || "$COHORT_CODEX_FD" -lt 3 \
      || -z "${RETHLAS_COHORT_CODEX_BIN:-}" \
      || -z "${RETHLAS_COHORT_CODEX_SHA256:-}" \
-     || ! -r "/proc/self/fd/$COHORT_CODEX_FD" \
-     || ! -x "/proc/self/fd/$COHORT_CODEX_FD" ]]; then
+     || ! -r "$descriptor_root/$COHORT_CODEX_FD" \
+     || ! -x "$descriptor_root/$COHORT_CODEX_FD" ]]; then
     echo "Bound cohort Codex descriptor is invalid." >&2
     exit 70
   fi
-  codex_command="/proc/self/fd/$COHORT_CODEX_FD"
+  codex_command="$descriptor_root/$COHORT_CODEX_FD"
   cohort_codex_fd_mode=1
 elif [[ -n "${RETHLAS_COHORT_CODEX_BIN:-}" ]]; then
   if [[ -z "${RETHLAS_COHORT_CODEX_SHA256:-}" ]]; then
@@ -1940,7 +1956,7 @@ def fail(message: str) -> None:
 
 
 argument = os.path.abspath(sys.argv[1])
-descriptor_match = re.fullmatch(r"/proc/self/fd/([0-9]+)", argument)
+descriptor_match = re.fullmatch(r"/(?:proc/self|dev)/fd/([0-9]+)", argument)
 try:
     if descriptor_match is not None:
         inherited_descriptor = int(descriptor_match.group(1))
@@ -2079,8 +2095,18 @@ echo " Cadence:    disabled"
 echo "========================================"
 echo ""
 
-VERIFY_HEALTH_URL="${VERIFY_HEALTH_URL:-${VERIFY_URL:-http://127.0.0.1:8091/health}}"
-verify_base_url="${VERIFY_HEALTH_URL%/health}"
+if [[ -n "${VERIFY_READY_URL:-}" ]]; then
+  verify_base_url="${VERIFY_READY_URL%/ready}"
+elif [[ -n "${VERIFY_HEALTH_URL:-}" ]]; then
+  verify_base_url="${VERIFY_HEALTH_URL%/health}"
+elif [[ -n "${VERIFY_URL:-}" ]]; then
+  verify_base_url="${VERIFY_URL%/health}"
+  verify_base_url="${verify_base_url%/ready}"
+else
+  verify_base_url="http://127.0.0.1:8091"
+fi
+VERIFY_READY_URL="${VERIFY_READY_URL:-${verify_base_url%/}/ready}"
+VERIFY_HEALTH_URL="${VERIFY_HEALTH_URL:-${verify_base_url%/}/health}"
 export VERIFY_PROOF_URL="${VERIFY_PROOF_URL:-${verify_base_url%/}/verify}"
 if ! "$TRUSTED_PYTHON_BIN" -I -B - "$VERIFY_PROOF_URL" <<'PY'
 import sys
@@ -2098,11 +2124,11 @@ then
 fi
 verifier_is_ready() {
   curl -sf --connect-timeout 2 --max-time 5 \
-    "$VERIFY_HEALTH_URL" >/dev/null 2>&1
+    "$VERIFY_READY_URL" >/dev/null 2>&1
 }
 if ! verifier_is_ready; then
   if [[ "$ALLOW_OFFLINE_DRAFT" != 1 ]]; then
-    echo "Verification service is not reachable at ${VERIFY_HEALTH_URL}." >&2
+    echo "Verification service is not ready at ${VERIFY_READY_URL}." >&2
     echo "Refusing to start a paid Legacy root without its only completion authority." >&2
     echo "Start the verifier, or explicitly set RETHLAS_LEGACY_ALLOW_OFFLINE_DRAFT=1 for draft-only work." >&2
     exit 1
@@ -2111,7 +2137,7 @@ if ! verifier_is_ready; then
   echo ""
 fi
 if verifier_is_ready && [[ "$MODEL_POLICY_PROFILE" != compatible ]]; then
-  verifier_profile_url="${VERIFY_HEALTH_URL%/health}/profile"
+  verifier_profile_url="${VERIFY_READY_URL%/ready}/profile"
   if ! verifier_profile_json="$(
     curl -sf --connect-timeout 2 --max-time 5 "$verifier_profile_url"
   )"; then
@@ -2169,13 +2195,13 @@ if [[ -n "$EXTERNAL_PLAN_SET_SELECTION" ]]; then
        || "$COHORT_HOST_SOURCE_SNAPSHOT" != /* \
        || "$COHORT_HOST_SOURCE_ORIGIN" != "$CLAUDE_CORE_LOGICAL_ORIGIN" \
        || ! "$COHORT_HOST_SOURCE_SHA256" =~ ^[0-9a-f]{64}$ \
-       || ! -r "/proc/self/fd/$COHORT_HOST_SOURCE_FD" \
+       || ! -r "$descriptor_root/$COHORT_HOST_SOURCE_FD" \
        || ! -f "$COHORT_HOST_SOURCE_SNAPSHOT" \
        || -L "$COHORT_HOST_SOURCE_SNAPSHOT" ]]; then
       echo "Bound cohort host-source descriptor is invalid." >&2
       exit 70
     fi
-    CLAUDE_CORE_SOURCE="/proc/self/fd/$COHORT_HOST_SOURCE_FD"
+    CLAUDE_CORE_SOURCE="$descriptor_root/$COHORT_HOST_SOURCE_FD"
     CLAUDE_CORE_SOURCE_SHA256="$COHORT_HOST_SOURCE_SHA256"
     CLAUDE_CORE_SOURCE_FD="$COHORT_HOST_SOURCE_FD"
     CLAUDE_CORE_SOURCE_ORIGIN="$COHORT_HOST_SOURCE_ORIGIN"
@@ -2187,7 +2213,7 @@ if [[ -n "$EXTERNAL_PLAN_SET_SELECTION" ]]; then
       exit 70
     fi
     exec {CLAUDE_CORE_SOURCE_FD}<"$CLAUDE_CORE_LOGICAL_ORIGIN"
-    CLAUDE_CORE_SOURCE="/proc/self/fd/$CLAUDE_CORE_SOURCE_FD"
+    CLAUDE_CORE_SOURCE="$descriptor_root/$CLAUDE_CORE_SOURCE_FD"
     CLAUDE_CORE_SOURCE_ORIGIN="$CLAUDE_CORE_LOGICAL_ORIGIN"
     CLAUDE_CORE_SOURCE_SHA256="$({
       "$TRUSTED_PYTHON_BIN" -I -B -c \
@@ -2296,6 +2322,9 @@ PY
   # transcript by searching the shared workspace (or the user's CLI history).
   # Fail before model launch unless an unprivileged mount/PID namespace is
   # available, then materialize a per-problem view immediately around Codex.
+  cohort_platform="$($TRUSTED_PYTHON_BIN -I -S -B -c 'import sys; print(sys.platform)')"
+  if [[ "$cohort_platform" == linux ]]; then
+  COHORT_ISOLATION_BACKEND="linux-mount-namespace"
   for isolation_tool in \
     /usr/bin/unshare /usr/bin/mount /usr/bin/umount /usr/bin/mktemp \
     /usr/bin/mkdir /usr/bin/touch /usr/bin/rmdir /usr/bin/cp \
@@ -2509,6 +2538,101 @@ cd "$root"
 exec "$codex_bin" "$@"
 BASH
 )"
+  elif [[ "$cohort_platform" == darwin ]]; then
+    COHORT_ISOLATION_BACKEND="macos-codex-seatbelt"
+    codex_profile_origin="${RETHLAS_COHORT_CODEX_BIN:-$CODEX_BIN}"
+    if [[ "$codex_profile_origin" != /* ]]; then
+      echo "macOS cohort isolation requires an absolute Codex executable origin." >&2
+      exit 70
+    fi
+    COHORT_PERMISSION_FILESYSTEM_TOML="$({
+      "$TRUSTED_PYTHON_BIN" -I -S -B - \
+        "$ROOT_DIR" "$codex_profile_origin" "$CODEX_BIN" \
+        "$PROBLEM_FILE" "$EXTERNAL_PLAN_RELATIVE" "$ref_dir" \
+        "$candidate_projection_dir" "$problem_rel" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+codex_paths = [pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])]
+problem_file = sys.argv[4]
+plan_relative = sys.argv[5]
+reference_relative = sys.argv[6]
+candidate_relative = sys.argv[7]
+problem_id = pathlib.Path(sys.argv[8])
+
+entries = {":minimal": "read", str(root): "deny"}
+for path in codex_paths:
+    if path.is_absolute():
+        entries[str(path)] = "read"
+for relative in (".agents", ".codex", "mcp", "AGENTS.legacy.md"):
+    path = root / relative
+    if path.exists() and not path.is_symlink():
+        entries[str(path)] = "read"
+for relative in (problem_file, plan_relative):
+    path = root / relative
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f"unsafe cohort input: {path}")
+    entries[str(path)] = "read"
+for relative in (reference_relative, candidate_relative):
+    path = root / relative
+    if path.is_dir() and not path.is_symlink():
+        entries[str(path)] = "read"
+for category in ("memory", "results"):
+    path = root / category / problem_id
+    if not path.is_dir() or path.is_symlink():
+        raise SystemExit(f"unsafe cohort output: {path}")
+    entries[str(path)] = "write"
+
+print(
+    "{" + ",".join(
+        json.dumps(path) + "=" + json.dumps(mode)
+        for path, mode in entries.items()
+    ) + "}"
+)
+PY
+    })" || {
+      echo "Could not construct the macOS cohort permission profile." >&2
+      exit 70
+    }
+    COHORT_PERMISSION_CONFIG_ARGS=(
+      -c 'default_permissions="axiom-relay-cohort"'
+      -c "permissions.axiom-relay-cohort.filesystem=$COHORT_PERMISSION_FILESYSTEM_TOML"
+      -c 'permissions.axiom-relay-cohort.network.enabled=false'
+      -c 'approval_policy="never"'
+    )
+    cohort_probe_path="$ROOT_DIR/results/$problem_rel/.axiom-isolation-probe"
+    if ! "$CODEX_BIN" sandbox \
+      --permission-profile axiom-relay-cohort \
+      -c "permissions.axiom-relay-cohort.filesystem=$COHORT_PERMISSION_FILESYSTEM_TOML" \
+      -c 'permissions.axiom-relay-cohort.network.enabled=false' \
+      -C "$ROOT_DIR" -- /bin/sh -c \
+      'test -r "$1" && test ! -r "$2" && : > "$3"' \
+      axiom-relay-cohort \
+      "$ROOT_DIR/$PROBLEM_FILE" "$ROOT_DIR/tests/run_legacy.sh" \
+      "$cohort_probe_path"; then
+      echo "macOS Codex Seatbelt cohort isolation probe failed; zero paid executors started." >&2
+      exit 70
+    fi
+    if ! "$TRUSTED_PYTHON_BIN" -I -S -B - "$cohort_probe_path" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file() or path.is_symlink():
+    raise SystemExit(1)
+path.unlink()
+PY
+    then
+      echo "macOS cohort isolation probe cleanup failed." >&2
+      exit 70
+    fi
+    unset cohort_probe_path codex_profile_origin
+  else
+    echo "External Claude cohorts support only Linux and macOS." >&2
+    exit 70
+  fi
   echo "Accepted Claude root plan set: $EXTERNAL_PLAN_SHA256"
   echo "Claude root session: $EXTERNAL_PLAN_ROOT_SESSION_ID"
   echo "Claude cohort retrieval mode: $EXTERNAL_RETRIEVAL_MODE"
@@ -2659,19 +2783,30 @@ for ((iter = 0; iter < MAX_ITERATIONS; iter += 1)); do
       --config "mcp_servers.reasoning_agent=$TRUSTED_REASONING_AGENT_MCP_TOML" \
       --config "mcp_servers.reasoning_checkpoint_primary=$TRUSTED_REASONING_CHECKPOINT_PRIMARY_MCP_TOML" \
       --config "mcp_servers.reasoning_checkpoint_recovery=$TRUSTED_REASONING_CHECKPOINT_RECOVERY_MCP_TOML" \
-      --sandbox workspace-write \
       --ephemeral)
     if [[ "$EXTERNAL_PLAN_USED" == 1 ]]; then
-      codex_arguments+=(--skip-git-repo-check "$prompt")
-      /usr/bin/unshare --user --map-root-user --mount --pid --fork \
-        --mount-proc /bin/bash --noprofile --norc -c \
-        "$COHORT_NAMESPACE_PROGRAM" rethlas-cohort-capsule \
-        "$ROOT_DIR" "$PROBLEM_FILE" "$problem_rel" \
-        "$EXTERNAL_PLAN_RELATIVE" "$ref_dir" "$candidate_projection_dir" \
-        "${HOME:-}" \
-        /tmp "$CODEX_BIN" "${codex_arguments[@]}"
+      if [[ "$COHORT_ISOLATION_BACKEND" == linux-mount-namespace ]]; then
+        codex_arguments+=(--sandbox workspace-write --skip-git-repo-check "$prompt")
+        /usr/bin/unshare --user --map-root-user --mount --pid --fork \
+          --mount-proc /bin/bash --noprofile --norc -c \
+          "$COHORT_NAMESPACE_PROGRAM" rethlas-cohort-capsule \
+          "$ROOT_DIR" "$PROBLEM_FILE" "$problem_rel" \
+          "$EXTERNAL_PLAN_RELATIVE" "$ref_dir" "$candidate_projection_dir" \
+          "${HOME:-}" \
+          /tmp "$CODEX_BIN" "${codex_arguments[@]}"
+      elif [[ "$COHORT_ISOLATION_BACKEND" == macos-codex-seatbelt ]]; then
+        codex_arguments+=(
+          "${COHORT_PERMISSION_CONFIG_ARGS[@]}"
+          --skip-git-repo-check
+          "$prompt"
+        )
+        "$CODEX_BIN" "${codex_arguments[@]}"
+      else
+        echo "External cohort isolation backend was not selected." >&2
+        exit 70
+      fi
     else
-      codex_arguments+=("$prompt")
+      codex_arguments+=(--sandbox workspace-write "$prompt")
       "$CODEX_BIN" "${codex_arguments[@]}"
     fi
   ) 2>&1 | "$TRUSTED_PYTHON_BIN" -I -B -c \

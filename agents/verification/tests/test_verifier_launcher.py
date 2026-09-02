@@ -14,7 +14,13 @@ LAUNCHER = REPOSITORY_ROOT / "agents" / "verification" / "scripts" / "run_verifi
 VERIFICATION_ROOT = REPOSITORY_ROOT / "agents" / "verification"
 
 
-def _fake_claude(tmp_path: Path, *, provider: str = "vertex") -> tuple[Path, Path]:
+def _fake_claude(
+    tmp_path: Path,
+    *,
+    provider: str = "vertex",
+    auth_method: str = "third_party",
+    subscription_type: str | None = None,
+) -> tuple[Path, Path]:
     executable = tmp_path / "claude"
     calls = tmp_path / "calls.jsonl"
     executable.write_text(
@@ -27,7 +33,14 @@ if path:
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(sys.argv[1:]) + "\\n")
 if sys.argv[1:] == ["auth", "status"]:
-    print(json.dumps({{"loggedIn": True, "authMethod": "third_party", "apiProvider": {provider!r}}}))
+    value = {{
+        "loggedIn": True,
+        "authMethod": {auth_method!r},
+        "apiProvider": {provider!r},
+    }}
+    if {subscription_type!r} is not None:
+        value["subscriptionType"] = {subscription_type!r}
+    print(json.dumps(value))
     raise SystemExit(0)
 raise SystemExit(90)
 """,
@@ -52,6 +65,10 @@ def _environment(tmp_path: Path, profile: str) -> dict[str, str]:
     (tmp_path / "home").mkdir(exist_ok=True)
     for name in (
         "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_FOUNDRY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_VERTEX_PROJECT_ID",
         "CLOUD_ML_REGION",
         "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -64,6 +81,13 @@ def _environment(tmp_path: Path, profile: str) -> dict[str, str]:
         "CLAUDE_CODE_MAX_TURNS",
         "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
         "VERIFY_MAX_OPERATIONAL_RESUMES",
+        "VERIFY_CLAUDE_AUTH_MODE",
+        "VERIFY_CLAUDE_AUTH_METHOD",
+        "VERIFY_CLAUDE_SUBSCRIPTION_TYPE",
+        "VERIFY_SERVER_HOST",
+        "VERIFY_SERVER_PORT",
+        "VERIFY_TLS_TERMINATED",
+        "VERIFY_API_TOKEN",
     ):
         environment.pop(name, None)
     return environment
@@ -90,6 +114,65 @@ def test_axiom_relay_public_settings_select_verifier_profile(
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "Verifier profile: balanced" in completed.stdout
+
+
+@pytest.mark.parametrize(
+    ("tls", "token", "diagnostic"),
+    [
+        ("0", bytes(range(32)).hex(), "requires VERIFY_TLS_TERMINATED=1"),
+        ("1", "x", "requires a 256-bit random"),
+    ],
+)
+def test_remote_verifier_configuration_fails_closed(
+    tmp_path: Path, tls: str, token: str, diagnostic: str
+) -> None:
+    environment = _environment(tmp_path, "compatible")
+    environment.update(
+        {
+            "VERIFY_SERVER_HOST": "0.0.0.0",
+            "VERIFY_TLS_TERMINATED": tls,
+            "VERIFY_API_TOKEN": token,
+        }
+    )
+
+    completed = subprocess.run(
+        [str(LAUNCHER)],
+        cwd=VERIFICATION_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert diagnostic in completed.stderr
+
+
+def test_remote_verifier_accepts_tls_and_random_256_bit_token(
+    tmp_path: Path,
+) -> None:
+    environment = _environment(tmp_path, "compatible")
+    environment.update(
+        {
+            "VERIFY_SERVER_HOST": "0.0.0.0",
+            "VERIFY_TLS_TERMINATED": "1",
+            "VERIFY_API_TOKEN": bytes(range(32)).hex(),
+        }
+    )
+
+    completed = subprocess.run(
+        [str(LAUNCHER)],
+        cwd=VERIFICATION_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "--host 0.0.0.0" in completed.stdout
 
 
 @pytest.mark.parametrize(
@@ -259,6 +342,77 @@ def test_max_diversity_missing_opus_mapping_fails_before_service_start(
     invocations = [json.loads(line) for line in calls.read_text().splitlines()]
     assert invocations == [["auth", "status"]]
     assert "Uvicorn running" not in completed.stdout + completed.stderr
+
+
+def test_max_diversity_accepts_subscription_without_vertex_configuration(
+    tmp_path: Path,
+) -> None:
+    environment = _environment(tmp_path, "max_diversity")
+    fake_claude, calls = _fake_claude(
+        tmp_path,
+        provider="anthropic",
+        auth_method="claude.ai",
+        subscription_type="max",
+    )
+    environment.update(
+        {
+            "VERIFY_CLAUDE_BIN": str(fake_claude),
+            "FAKE_CLAUDE_CALLS": str(calls),
+            "VERIFY_CLAUDE_AUTH_MODE": "subscription",
+        }
+    )
+
+    completed = subprocess.run(
+        [str(LAUNCHER)],
+        cwd=VERIFICATION_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "Adversarial verifier: claude-opus-5[1m]/max via anthropic" in (
+        completed.stdout
+    )
+    assert [json.loads(line) for line in calls.read_text().splitlines()] == [
+        ["auth", "status"]
+    ]
+
+
+def test_max_diversity_subscription_rejects_stored_api_auth(
+    tmp_path: Path,
+) -> None:
+    environment = _environment(tmp_path, "max_diversity")
+    fake_claude, calls = _fake_claude(
+        tmp_path,
+        provider="anthropic",
+        auth_method="api_key",
+    )
+    environment.update(
+        {
+            "VERIFY_CLAUDE_BIN": str(fake_claude),
+            "FAKE_CLAUDE_CALLS": str(calls),
+            "VERIFY_CLAUDE_AUTH_MODE": "subscription",
+        }
+    )
+
+    completed = subprocess.run(
+        [str(LAUNCHER)],
+        cwd=VERIFICATION_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "requires a Claude subscription" in completed.stderr
+    assert [json.loads(line) for line in calls.read_text().splitlines()] == [
+        ["auth", "status"]
+    ]
 
 
 def test_max_diversity_explicit_opus_mapping_combines_with_vertex_settings(

@@ -2,6 +2,11 @@
 # Durable hot-join implementation. Invoke through run_example.sh.
 set -euo pipefail
 
+if (( BASH_VERSINFO[0] < 5 )); then
+  echo "AxiomRelay requires Bash 5 or newer (macOS: brew install bash)." >&2
+  exit 1
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROBLEM_FILE="${PROBLEM_FILE:-data/example.md}"
 MODEL="${MODEL:-gpt-5.6-sol}"
@@ -182,11 +187,21 @@ if [[ "$python_command" != /* ]] || [[ ! -x "$python_command" ]]; then
   echo "Generation python3 must resolve to an absolute executable path." >&2
   exit 1
 fi
-if ! command -v realpath >/dev/null 2>&1; then
-  echo "realpath is required to validate the generation Python environment." >&2
+TRUSTED_PYTHON_BIN="$(cd "$(dirname "$python_command")" && pwd -P)/$(basename "$python_command")"
+python_target="$TRUSTED_PYTHON_BIN"
+temporary_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+for candidate in "$TRUSTED_PYTHON_BIN" "$python_target"; do
+  if [[ "$candidate" == "$ROOT_DIR" || "$candidate" == "$ROOT_DIR"/* \
+     || "$candidate" == "$temporary_root" || "$candidate" == "$temporary_root"/* ]]; then
+    echo "Python environment must be outside the generation workspace and temporary directory: $candidate" >&2
+    exit 1
+  fi
+done
+if [[ -L "$TRUSTED_PYTHON_BIN" \
+   || "$TRUSTED_PYTHON_BIN" != "$python_target" ]]; then
+  echo "Guardian requires a non-symlink Python interpreter; recreate the external generation environment with: python3 -m venv --copies <path>" >&2
   exit 1
 fi
-TRUSTED_PYTHON_BIN="$(cd "$(dirname "$python_command")" && pwd -P)/$(basename "$python_command")"
 RETHLAS_RESOLVED_COST_POLICY_JSON="$("$TRUSTED_PYTHON_BIN" -I -B - \
   "$RESOLVED_COST_GATE_POLICY" <<'PY'
 import json
@@ -211,19 +226,6 @@ RETHLAS_RESOLVED_COST_POLICY_SHA256="$("$TRUSTED_PYTHON_BIN" -I -B -c \
 export RETHLAS_RESOLVED_COST_POLICY_JSON
 export RETHLAS_RESOLVED_COST_POLICY_SHA256
 unset RETHLAS_COST_GATE_POLICY
-python_target="$(realpath "$TRUSTED_PYTHON_BIN")"
-temporary_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
-for candidate in "$TRUSTED_PYTHON_BIN" "$python_target"; do
-  if [[ "$candidate" == "$ROOT_DIR" || "$candidate" == "$ROOT_DIR"/* \
-     || "$candidate" == "$temporary_root" || "$candidate" == "$temporary_root"/* ]]; then
-    echo "Python environment must be outside the generation workspace and temporary directory: $candidate" >&2
-    exit 1
-  fi
-done
-if [[ "$TRUSTED_PYTHON_BIN" != "$python_target" ]]; then
-  echo "Guardian requires a non-symlink Python interpreter; recreate the external generation environment with: python3 -m venv --copies <path>" >&2
-  exit 1
-fi
 
 # Process .pth files before starting Python with site initialization enabled.
 # Executable .pth lines run before the in-process preflight can inspect
@@ -4008,8 +4010,18 @@ fi
 echo "========================================"
 echo ""
 
-VERIFY_HEALTH_URL="${VERIFY_HEALTH_URL:-${VERIFY_URL:-http://127.0.0.1:8091/health}}"
-verify_base_url="${VERIFY_HEALTH_URL%/health}"
+if [[ -n "${VERIFY_READY_URL:-}" ]]; then
+  verify_base_url="${VERIFY_READY_URL%/ready}"
+elif [[ -n "${VERIFY_HEALTH_URL:-}" ]]; then
+  verify_base_url="${VERIFY_HEALTH_URL%/health}"
+elif [[ -n "${VERIFY_URL:-}" ]]; then
+  verify_base_url="${VERIFY_URL%/health}"
+  verify_base_url="${verify_base_url%/ready}"
+else
+  verify_base_url="http://127.0.0.1:8091"
+fi
+VERIFY_READY_URL="${VERIFY_READY_URL:-${verify_base_url%/}/ready}"
+VERIFY_HEALTH_URL="${VERIFY_HEALTH_URL:-${verify_base_url%/}/health}"
 export VERIFY_PROOF_URL="${VERIFY_PROOF_URL:-${verify_base_url%/}/verify}"
 if ! "$TRUSTED_PYTHON_BIN" -I -B - "$VERIFY_PROOF_URL" <<'PY'
 import sys
@@ -4025,11 +4037,11 @@ then
   echo "VERIFY_PROOF_URL must use HTTPS unless it targets loopback: $VERIFY_PROOF_URL" >&2
   exit 1
 fi
-if ! curl -sf "$VERIFY_HEALTH_URL" >/dev/null 2>&1; then
-  echo "WARNING: verification service not reachable at ${VERIFY_HEALTH_URL}"
-  echo "         The agent may be unable to produce blueprint_verified.md."
-  echo "         Start it first if you need verified proofs."
-  echo ""
+if ! curl -sf --connect-timeout 2 --max-time 30 \
+  "$VERIFY_READY_URL" >/dev/null 2>&1; then
+  echo "Verification service is not ready at ${VERIFY_READY_URL}." >&2
+  echo "Refusing to start a paid reviewed root before the zero-model ready gate passes." >&2
+  exit 1
 fi
 TRUSTED_MCP_ENV_TOML="$("$TRUSTED_PYTHON_BIN" -I -B - <<'PY'
 import json

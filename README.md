@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-**Proof hill climbing for hard mathematics.**
+**A proof hill-climbing system for hard mathematical problems.**
 
 Keep the audited frontier. Repair one gap at a time.
 
@@ -168,6 +168,19 @@ findings, or session state.
 
 ## Quick start
 
+Supported hosts are Linux and macOS. Use Python 3.11, 3.12, or 3.13 and Bash
+5 or newer. macOS still ships an older system Bash, so install the current
+version and put it first on `PATH`:
+
+```bash
+brew install bash uv
+export PATH="$(brew --prefix)/bin:$PATH"
+```
+
+Linux external proof lanes use an unprivileged mount/PID namespace. On macOS,
+the same lanes use Codex's native Seatbelt permission profiles. Both paths run
+a zero-model isolation probe before any paid proof call.
+
 ### 1. Clone and install the CLIs
 
 ```bash
@@ -178,6 +191,13 @@ npm install -g @openai/codex
 
 Authenticate Codex before running a problem. Install and authenticate Claude
 Code as well when using a Claude root or `max_diversity` verification.
+Claude authentication is provider-neutral: `auto` follows the active CLI
+provider. Set `AXIOM_RELAY_CLAUDE_AUTH_MODE=subscription` when a root must use
+Claude subscription OAuth even if the machine also has Vertex, Bedrock,
+Foundry, or API-key configuration. The verifier has the parallel
+`VERIFY_CLAUDE_AUTH_MODE` setting. Explicit modes bind both the provider and
+Claude CLI's reported authentication method; `subscription` also requires a
+reported subscription type. A mismatch stops the run before a model call.
 
 ### 2. Create the Python environments
 
@@ -186,7 +206,7 @@ Verifier:
 ```bash
 python3 -m venv agents/verification/.venv
 agents/verification/.venv/bin/pip install \
-  -r agents/verification/api/requirements.txt
+  -r agents/verification/requirements.txt
 ```
 
 Generation:
@@ -194,7 +214,7 @@ Generation:
 ```bash
 python3 -m venv --copies --without-pip agents/.generation-venv
 uv pip install --python agents/.generation-venv/bin/python \
-  -r agents/generation/requirements-math-research.txt
+  -r agents/generation/requirements-dev.txt
 ```
 
 The copied generation interpreter is intentional. The runner attests the
@@ -223,8 +243,24 @@ AXIOM_RELAY_VERIFIER_PRINT_COMMAND=1 \
 ./scripts/run_verifier.sh
 ```
 
-The default endpoint is loopback HTTP on port `8091`. Remote deployment must
-use HTTPS and a high-entropy `VERIFY_API_TOKEN`.
+The default endpoint is loopback HTTP on port `8091`. Check real readiness—not
+just process liveness—before starting a proof run:
+
+```bash
+curl -fsS http://127.0.0.1:8091/ready
+```
+
+`/ready` makes no model call. It checks the installed CLIs and authentication,
+the MCP/runtime imports, writable durable storage, the platform primitives,
+and an actual Codex sandbox probe.
+
+Remote deployment must terminate HTTPS before this service and use a random
+token containing at least 256 bits. The application does not terminate TLS:
+
+```bash
+export VERIFY_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+export VERIFY_TLS_TERMINATED=1
+```
 
 ### 4. Run a problem
 
@@ -277,7 +313,7 @@ CLI is useful for recovery and testing:
 ```bash
 PROBLEM_PATH=agents/generation/data/my_problem.md
 PROBLEM_ID=my_problem
-STATEMENT_SHA256="$(sha256sum "$PROBLEM_PATH" | cut -d' ' -f1)"
+STATEMENT_SHA256="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$PROBLEM_PATH")"
 
 agents/.generation-venv/bin/python -I -B agents/claude_core.py \
   --prepare-pro-gap-query \
@@ -358,7 +394,7 @@ candidate:
 ```bash
 PROBLEM_PATH=agents/generation/data/my_problem.md
 PROBLEM_ID=my_problem
-STATEMENT_SHA256="$(sha256sum "$PROBLEM_PATH" | cut -d' ' -f1)"
+STATEMENT_SHA256="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$PROBLEM_PATH")"
 
 agents/.generation-venv/bin/python -I -B agents/claude_core.py \
   --ingest-reference-candidate \
@@ -422,10 +458,14 @@ new root without either binding still rejects this setting.
 | `AXIOM_RELAY_CLAUDE_TAKEOVER_FROM` | Explicitly fence and replace a recoverable Claude root |
 | `AXIOM_RELAY_CLAUDE_OWNER_PROMPT` | Operator message for a resumed Claude turn or explicit takeover |
 | `AXIOM_RELAY_CLAUDE_CONTEXT_WINDOW` | Claude context window; Opus defaults to 1M |
+| `AXIOM_RELAY_CLAUDE_AUTH_MODE` | `auto`, `subscription`, `api`, `vertex`, `bedrock`, or `foundry` for a Claude root |
 | `AXIOM_RELAY_PRINT_COMMAND` | Print a Claude root launch command without executing it |
 | `PROBLEM_FILE` | Safe Markdown path below `agents/generation/data/` |
-| `VERIFY_HEALTH_URL`, `VERIFY_PROOF_URL` | Verifier service endpoints |
+| `CLAUDE_CONFIG_DIR` | Optional Claude configuration directory used by the root launcher |
+| `VERIFY_READY_URL`, `VERIFY_PROOF_URL` | Verifier readiness and proof endpoints |
+| `VERIFY_CLAUDE_AUTH_MODE` | Provider-neutral Claude authentication selection for the verifier |
 | `VERIFY_API_TOKEN` | Bearer token required for non-loopback verification |
+| `VERIFY_TLS_TERMINATED` | Must be `1` when a non-loopback verifier is behind trusted TLS termination |
 
 Historical environment names, schema identifiers, and receipts remain readable
 for one transition release. New automation should use the settings above.

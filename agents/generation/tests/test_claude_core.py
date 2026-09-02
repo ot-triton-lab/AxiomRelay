@@ -23,6 +23,9 @@ import jsonschema
 from agents import claude_core
 
 
+_TRACKED_EXAMPLE = Path(__file__).with_name("fixtures") / "example.md"
+
+
 @pytest.fixture(autouse=True)
 def _isolate_publication_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -56,11 +59,15 @@ def _run_council_phase_workers_synchronously(
 
 def _statement_digest(problem_id: str = "example") -> str:
     path = claude_core.GENERATION_ROOT / "data" / f"{problem_id}.md"
+    if problem_id == "example" and not path.is_file():
+        path = _TRACKED_EXAMPLE
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _statement_text(problem_id: str = "example") -> str:
     path = claude_core.GENERATION_ROOT / "data" / f"{problem_id}.md"
+    if problem_id == "example" and not path.is_file():
+        path = _TRACKED_EXAMPLE
     return path.read_bytes().decode("utf-8")
 
 
@@ -4358,9 +4365,7 @@ def test_source_drift_fence_accepts_historical_phase_schema_by_hash_chain(
         "problem_id": problem_id,
         "statement_sha256": statement_sha256,
         "root_session_id": root_session_id,
-        "problem_statement": (
-            claude_core.GENERATION_ROOT / "data" / "example.md"
-        ).read_text(encoding="utf-8"),
+        "problem_statement": _statement_text(),
         "retrieval_profile": retrieval_profile,
     }
     request_path = state_dir / f"{phase}_request.json"
@@ -7567,6 +7572,44 @@ def test_pid_liveness_treats_an_unreaped_zombie_as_stopped() -> None:
             os.waitpid(pid, 0)
         except ChildProcessError:
             pass
+
+
+def test_darwin_process_identity_uses_native_start_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(claude_core.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        claude_core,
+        "_darwin_process_info",
+        lambda pid: (pid, 41, 1_725_000_000, 123_456),
+    )
+    expected = claude_core.sha256_bytes(
+        claude_core.canonical_json(
+            {
+                "platform": "darwin",
+                "pid": 123,
+                "start_seconds": 1_725_000_000,
+                "start_microseconds": 123_456,
+            }
+        ).encode("utf-8")
+    )
+
+    assert claude_core._process_identity_token(123) == expected
+
+
+def test_darwin_parent_fence_requests_userspace_watcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner_token = "a" * 64
+    monkeypatch.setattr(claude_core.sys, "platform", "darwin")
+    monkeypatch.setattr(claude_core.os, "getppid", lambda: 123)
+    monkeypatch.setattr(
+        claude_core,
+        "_process_identity_token",
+        lambda pid: owner_token if pid == 123 else None,
+    )
+
+    assert claude_core._arm_parent_death_signal(123, owner_token) is True
 
 
 @pytest.mark.skipif(

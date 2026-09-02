@@ -9,6 +9,7 @@ effect fencing, memory publication, and whole-proof verification.
 from __future__ import annotations
 
 import base64
+import ctypes
 import fcntl
 import hashlib
 import json
@@ -30,6 +31,15 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Literal, Mapping
+
+
+def _descriptor_path(descriptor: int) -> Path:
+    """Return a live descriptor path on Linux or macOS."""
+
+    for root in (Path("/proc/self/fd"), Path("/dev/fd")):
+        if root.is_dir():
+            return root / str(descriptor)
+    raise ClaudeCoreError("descriptor filesystem is unavailable")
 
 
 AGENTS_ROOT = Path(__file__).resolve(strict=True).parent
@@ -360,7 +370,7 @@ RUNTIME_DEPENDENCY_SHA256 = {
     "CLAUDE.md": "ed1cb9e8960f5bf4a5f2a1ff006696a33c7c48cb6dd86b9bd498443a0e18256c",
     ".mcp.json": "b69488ba8934f965cc58e3f02907d8e9b1129bf3558637655ddfd8e1eba3c177",
     "mcp/legacy_server.py": "3601b1409986e9d8a916bf984d4aae8b89b7237d81e92ab39d5bf5eb7966eaa5",
-    "mcp/legacy_verification_client.py": "a181da9cc402a9f326919a7d957cd06ff9ee4f4c630a2c3caad40e49955ea6dc",
+    "mcp/legacy_verification_client.py": "a84cc93af6c538e665078f277417223d96ea54d1cd5b64e533dc576ba40517b7",
     "mcp/proof_context.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166",
     "mcp/publication_proof_context_v3.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166",
 }
@@ -7558,7 +7568,7 @@ def _require_codex_login(codex_bin: Path) -> Path:
             )
         ):
             raise ClaudeCoreError("Codex CLI changed during login open")
-        pinned = Path(f"/proc/self/fd/{descriptor}")
+        pinned = _descriptor_path(descriptor)
         executable = pinned if pinned.exists() else resolved
         completed = subprocess.run(
             [str(executable), "login", "status"],
@@ -7594,37 +7604,113 @@ def _process_group_is_live(process_group_id: int) -> bool:
     return True
 
 
-def _process_identity_token(pid: int) -> str | None:
-    """Return a boot-bound Linux process-start identity, if still observable."""
+def _darwin_process_info(pid: int) -> tuple[int, int, int, int] | None:
+    """Return ``(pid, pgid, start_sec, start_usec)`` via libproc."""
 
-    if not Path("/proc/self/stat").is_file():
-        return None
+    class ProcBsdInfo(ctypes.Structure):
+        _fields_ = [
+            ("pbi_flags", ctypes.c_uint32),
+            ("pbi_status", ctypes.c_uint32),
+            ("pbi_xstatus", ctypes.c_uint32),
+            ("pbi_pid", ctypes.c_uint32),
+            ("pbi_ppid", ctypes.c_uint32),
+            ("pbi_uid", ctypes.c_uint32),
+            ("pbi_gid", ctypes.c_uint32),
+            ("pbi_ruid", ctypes.c_uint32),
+            ("pbi_rgid", ctypes.c_uint32),
+            ("pbi_svuid", ctypes.c_uint32),
+            ("pbi_svgid", ctypes.c_uint32),
+            ("pbi_rfu_1", ctypes.c_uint32),
+            ("pbi_comm", ctypes.c_char * 16),
+            ("pbi_name", ctypes.c_char * 32),
+            ("pbi_nfiles", ctypes.c_uint32),
+            ("pbi_pgid", ctypes.c_uint32),
+            ("pbi_pjobc", ctypes.c_uint32),
+            ("e_tdev", ctypes.c_uint32),
+            ("e_tpgid", ctypes.c_uint32),
+            ("pbi_nice", ctypes.c_int32),
+            ("pbi_start_tvsec", ctypes.c_uint64),
+            ("pbi_start_tvusec", ctypes.c_uint64),
+        ]
+
     try:
-        raw = Path(f"/proc/{pid}/stat").read_bytes()
-        boot_id = Path("/proc/sys/kernel/random/boot_id").read_bytes().strip()
-    except (FileNotFoundError, ProcessLookupError):
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        proc_pidinfo = libproc.proc_pidinfo
+        proc_pidinfo.argtypes = (
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        )
+        proc_pidinfo.restype = ctypes.c_int
+        info = ProcBsdInfo()
+        copied = proc_pidinfo(
+            pid,
+            3,  # PROC_PIDTBSDINFO
+            0,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+    except (AttributeError, OSError) as exc:
+        raise ClaudeCoreError("cannot load macOS process metadata") from exc
+    # pbi_status 5 is SZOMB.
+    if copied == 0:
         return None
-    except OSError as exc:
-        raise ClaudeCoreError("cannot inspect worker process identity") from exc
-    closing_parenthesis = raw.rfind(b")")
-    if closing_parenthesis < 0:
-        raise ClaudeCoreError("worker process identity is malformed")
-    fields = raw[closing_parenthesis + 2 :].split()
-    if len(fields) < 20:
-        raise ClaudeCoreError("worker process identity is truncated")
-    try:
-        start_time_ticks = int(fields[19])
-    except ValueError as exc:
-        raise ClaudeCoreError("worker process start identity is invalid") from exc
-    return sha256_bytes(
-        canonical_json(
-            {
-                "boot_id": boot_id.decode("ascii"),
-                "pid": pid,
-                "start_time_ticks": start_time_ticks,
-            }
-        ).encode("utf-8")
+    if copied != ctypes.sizeof(info) or info.pbi_pid != pid:
+        raise ClaudeCoreError("macOS worker process identity is malformed")
+    if info.pbi_status == 5:
+        return None
+    return (
+        int(info.pbi_pid),
+        int(info.pbi_pgid),
+        int(info.pbi_start_tvsec),
+        int(info.pbi_start_tvusec),
     )
+
+
+def _process_identity_token(pid: int) -> str | None:
+    """Return a platform process-start identity, if still observable."""
+
+    if sys.platform.startswith("linux"):
+        try:
+            raw = Path(f"/proc/{pid}/stat").read_bytes()
+            boot_id = Path("/proc/sys/kernel/random/boot_id").read_bytes().strip()
+        except (FileNotFoundError, ProcessLookupError):
+            return None
+        except OSError as exc:
+            raise ClaudeCoreError("cannot inspect worker process identity") from exc
+        closing_parenthesis = raw.rfind(b")")
+        if closing_parenthesis < 0:
+            raise ClaudeCoreError("worker process identity is malformed")
+        fields = raw[closing_parenthesis + 2 :].split()
+        if len(fields) < 20:
+            raise ClaudeCoreError("worker process identity is truncated")
+        if fields[0] in {b"Z", b"X"}:
+            return None
+        try:
+            start_time_ticks = int(fields[19])
+        except ValueError as exc:
+            raise ClaudeCoreError("worker process start identity is invalid") from exc
+        identity: Mapping[str, object] = {
+            "boot_id": boot_id.decode("ascii"),
+            "pid": pid,
+            "start_time_ticks": start_time_ticks,
+        }
+    elif sys.platform == "darwin":
+        process_info = _darwin_process_info(pid)
+        if process_info is None:
+            return None
+        observed_pid, _pgid, start_seconds, start_microseconds = process_info
+        identity = {
+            "platform": "darwin",
+            "pid": observed_pid,
+            "start_seconds": start_seconds,
+            "start_microseconds": start_microseconds,
+        }
+    else:
+        return None
+    return sha256_bytes(canonical_json(identity).encode("utf-8"))
 
 
 def _process_group_has_non_zombie_members(process_group_id: int) -> bool:
@@ -7691,10 +7777,10 @@ def _terminate_orphan_process_group(process_group_id: int) -> None:
         time.sleep(0.05)
 
 
-def _arm_linux_parent_death_signal(
+def _arm_parent_death_signal(
     expected_parent_pid: int,
     expected_parent_start_token: str | None = None,
-) -> None:
+) -> bool:
     """Make a fresh wrapper terminate when its owning worker disappears."""
 
     if expected_parent_pid <= 1:
@@ -7713,6 +7799,8 @@ def _arm_linux_parent_death_signal(
                 raise OSError(ctypes.get_errno(), "prctl(PR_SET_PDEATHSIG) failed")
         except (ImportError, OSError) as exc:
             raise ClaudeCoreError("cannot arm owned-command parent death signal") from exc
+    elif sys.platform != "darwin":
+        raise ClaudeCoreError("owned-command parent fencing is unsupported")
     if os.getppid() != expected_parent_pid:
         raise ClaudeCoreError("owned-command parent disappeared before launch")
     if (
@@ -7721,6 +7809,7 @@ def _arm_linux_parent_death_signal(
         != expected_parent_start_token
     ):
         raise ClaudeCoreError("owned-command parent identity changed before launch")
+    return sys.platform == "darwin"
 
 
 def _execute_owned_command(
@@ -7761,7 +7850,7 @@ def _execute_owned_command(
             and executable_sha256 != expected_executable_sha256
         ):
             raise ClaudeCoreError("owned executable digest changed before launch")
-        pinned_path = Path(f"/proc/self/fd/{executable_fd}")
+        pinned_path = _descriptor_path(executable_fd)
         if expected_executable_sha256 is not None and not pinned_path.exists():
             raise ClaudeCoreError("digest-bound executable launch is unavailable")
         normalized_command = [
@@ -7846,7 +7935,7 @@ def _execute_owned_command(
     except BaseException:
         os.close(executable_fd)
         raise
-    _arm_linux_parent_death_signal(
+    needs_parent_watcher = _arm_parent_death_signal(
         expected_parent_pid, expected_parent_start_token
     )
 
@@ -7855,6 +7944,33 @@ def _execute_owned_command(
         os.killpg(os.getpgrp(), signal.SIGKILL)
 
     signal.signal(signal.SIGTERM, terminate_group)
+    if needs_parent_watcher:
+
+        def watch_parent() -> None:
+            while True:
+                if os.getppid() != expected_parent_pid:
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    return
+                try:
+                    parent_identity_changed = (
+                        expected_parent_start_token is not None
+                        and _process_identity_token(expected_parent_pid)
+                        != expected_parent_start_token
+                    )
+                except ClaudeCoreError:
+                    # Losing the native identity probe must fail closed: a
+                    # detached paid child is worse than a rejected launch.
+                    parent_identity_changed = True
+                if parent_identity_changed:
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    return
+                time.sleep(0.1)
+
+        threading.Thread(
+            target=watch_parent,
+            name="axiom-relay-parent-lifeline",
+            daemon=True,
+        ).start()
     try:
         process = subprocess.Popen(
             normalized_command,

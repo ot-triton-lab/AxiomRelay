@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import ctypes
 import errno
 import fcntl
@@ -50,6 +52,15 @@ from api.proof_context import (
     extract_verification_target,
     parse_blueprint,
 )
+
+
+def _descriptor_path(descriptor: int) -> Path:
+    """Return a descriptor-backed path on Linux or macOS."""
+
+    for root in (Path("/proc/self/fd"), Path("/dev/fd")):
+        if root.is_dir():
+            return root / str(descriptor)
+    raise RuntimeError("descriptor filesystem is unavailable")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -324,6 +335,20 @@ CLAUDE_CODE_MAX_OUTPUT_TOKENS = _positive_bounded_env(
 )
 if CLAUDE_CODE_MAX_OUTPUT_TOKENS != 128_000:
     raise RuntimeError("CLAUDE_CODE_MAX_OUTPUT_TOKENS must be exactly 128000")
+VERIFY_CLAUDE_AUTH_MODE = os.getenv("VERIFY_CLAUDE_AUTH_MODE", "auto")
+if VERIFY_CLAUDE_AUTH_MODE not in {
+    "auto",
+    "subscription",
+    "api",
+    "vertex",
+    "bedrock",
+    "foundry",
+}:
+    raise RuntimeError("VERIFY_CLAUDE_AUTH_MODE is invalid")
+VERIFY_CLAUDE_AUTH_METHOD = os.getenv("VERIFY_CLAUDE_AUTH_METHOD", "")
+VERIFY_CLAUDE_SUBSCRIPTION_TYPE = os.getenv(
+    "VERIFY_CLAUDE_SUBSCRIPTION_TYPE", ""
+)
 CLAUDE_OUTPUT_CONTRACT = "raw_json_v1"
 ABSOLUTE_VERIFY_CONTEXT_MAX_CHARS = 64_000_000
 ABSOLUTE_VERIFY_MAX_EXPANSION_ROUNDS = 4_096
@@ -409,6 +434,8 @@ VERIFY_MAX_REQUEST_BYTES = _positive_bounded_env(
 )
 VERIFY_BODY_TIMEOUT_SECONDS = _positive_env("VERIFY_BODY_TIMEOUT_SECONDS", 30)
 VERIFY_API_TOKEN = os.getenv("VERIFY_API_TOKEN", "")
+VERIFY_SERVER_HOST = os.getenv("VERIFY_SERVER_HOST", "127.0.0.1")
+VERIFY_TLS_TERMINATED = os.getenv("VERIFY_TLS_TERMINATED", "0") == "1"
 VERIFIER_SERVICE_VERSION = "0.5.2"
 VERIFICATION_ATTEMPT_RE = re.compile(r"^veratt_[0-9a-f]{32}$")
 VERIFICATION_CALLER_RE = re.compile(r"^vcaller_[0-9a-f]{32}$")
@@ -1439,6 +1466,48 @@ def _claude_provider_matches(expected: str, observed: object) -> bool:
     return observed == expected
 
 
+def _claude_auth_binding_matches(
+    value: Mapping[str, Any], *, expected_provider: str
+) -> bool:
+    observed_method = value.get("authMethod")
+    observed_subscription = value.get("subscriptionType")
+    if not isinstance(observed_method, str) or not observed_method:
+        return VERIFY_CLAUDE_AUTH_MODE == "auto" and not VERIFY_CLAUDE_AUTH_METHOD
+    if len(observed_method.encode("utf-8")) > 128:
+        return False
+    if observed_subscription is None:
+        observed_subscription = ""
+    if (
+        not isinstance(observed_subscription, str)
+        or len(observed_subscription.encode("utf-8")) > 128
+    ):
+        return False
+    if (
+        VERIFY_CLAUDE_AUTH_METHOD
+        and observed_method != VERIFY_CLAUDE_AUTH_METHOD
+    ):
+        return False
+    if (
+        VERIFY_CLAUDE_SUBSCRIPTION_TYPE
+        and observed_subscription != VERIFY_CLAUDE_SUBSCRIPTION_TYPE
+    ):
+        return False
+    if VERIFY_CLAUDE_AUTH_MODE == "subscription":
+        return (
+            expected_provider == "anthropic"
+            and observed_method == "claude.ai"
+            and bool(observed_subscription)
+        )
+    if VERIFY_CLAUDE_AUTH_MODE == "api":
+        return expected_provider == "anthropic" and observed_method == "api_key"
+    if VERIFY_CLAUDE_AUTH_MODE in {"vertex", "bedrock", "foundry"}:
+        return (
+            expected_provider == VERIFY_CLAUDE_AUTH_MODE
+            and observed_method == "third_party"
+        )
+    return True
+
+
 def _require_claude_auth(
     executable: Path, *, backend: VerifierBackend, environment: Mapping[str, str]
 ) -> None:
@@ -1474,10 +1543,13 @@ def _require_claude_auth(
         not isinstance(value, dict)
         or value.get("loggedIn") is not True
         or not _claude_provider_matches(backend.provider, value.get("apiProvider"))
+        or not _claude_auth_binding_matches(
+            value, expected_provider=backend.provider
+        )
     ):
         raise HTTPException(
             status_code=500,
-            detail="cold Claude verifier auth provider does not match policy",
+            detail="cold Claude verifier auth provider/method does not match policy",
         )
 
 
@@ -3859,7 +3931,15 @@ def _targeted_loaded_code_sha256() -> str:
         for name, value in vars(module).items():
             if (
                 name.isupper()
-                and name not in {"_REQUEST_SLOTS", "_ADMISSION_SLOTS"}
+                and name
+                not in {
+                    "_REQUEST_SLOTS",
+                    "_ADMISSION_SLOTS",
+                    "_AUTH_FAILURE_LOCK",
+                    "_AUTH_FAILURES",
+                    "_READY_LOCK",
+                    "_READY_CACHE",
+                }
                 and not isinstance(value, (type, FunctionType))
             ):
                 semantic_globals[f"{module_name}.{name}"] = value
@@ -3944,6 +4024,152 @@ def _targeted_regular_file_record(
     }
 
 
+def _validate_targeted_macho(descriptor: int, file_size: int) -> None:
+    """Validate a bounded Mach-O executable and its loader paths."""
+
+    if file_size < 32:
+        raise RuntimeError("targeted Codex Mach-O header is truncated")
+
+    def checked_slice(offset: int, size: int) -> None:
+        if offset < 0 or size < 32 or offset + size > file_size:
+            raise RuntimeError("targeted Codex Mach-O slice is invalid")
+        header = os.pread(descriptor, 32, offset)
+        if header[:4] == b"\xcf\xfa\xed\xfe":
+            byte_order = "<"
+        elif header[:4] == b"\xfe\xed\xfa\xcf":
+            byte_order = ">"
+        else:
+            raise RuntimeError("targeted Codex Mach-O slice must be 64-bit")
+        (
+            _magic,
+            _cpu,
+            _subcpu,
+            file_type,
+            command_count,
+            command_bytes,
+            _flags,
+        ) = (
+            struct.unpack(f"{byte_order}7I", header[:28])
+        )
+        if (
+            file_type != 2  # MH_EXECUTE
+            or command_count == 0
+            or command_count > 4096
+            or command_bytes > 16_000_000
+            or 32 + command_bytes > size
+        ):
+            raise RuntimeError("targeted Codex Mach-O load commands are invalid")
+        command_offset = offset + 32
+        command_end = command_offset + command_bytes
+        dylib_commands = {
+            0xC,  # LC_LOAD_DYLIB
+            0x18 | 0x80000000,  # LC_LOAD_WEAK_DYLIB
+            0x1F | 0x80000000,  # LC_REEXPORT_DYLIB
+            0x23 | 0x80000000,  # LC_LOAD_UPWARD_DYLIB
+            0x20,  # LC_LAZY_LOAD_DYLIB
+        }
+        for _index in range(command_count):
+            raw_command = os.pread(descriptor, 8, command_offset)
+            if len(raw_command) != 8:
+                raise RuntimeError("targeted Codex Mach-O command is truncated")
+            command, command_size = struct.unpack(
+                f"{byte_order}II", raw_command
+            )
+            if command_size < 8 or command_offset + command_size > command_end:
+                raise RuntimeError("targeted Codex Mach-O command is invalid")
+            if command in {0x1C | 0x80000000, 0x27}:  # RPATH / DYLD_ENVIRONMENT
+                raise RuntimeError(
+                    "targeted Codex Mach-O contains an unsafe loader override"
+                )
+            if command in dylib_commands or command == 0xE:  # LC_LOAD_DYLINKER
+                if command_size < 12:
+                    raise RuntimeError(
+                        "targeted Codex Mach-O loader command is truncated"
+                    )
+                raw_name_offset = os.pread(descriptor, 4, command_offset + 8)
+                if len(raw_name_offset) != 4:
+                    raise RuntimeError(
+                        "targeted Codex Mach-O loader path is truncated"
+                    )
+                name_offset = struct.unpack(
+                    f"{byte_order}I", raw_name_offset
+                )[0]
+                if name_offset < 12 or name_offset >= command_size:
+                    raise RuntimeError(
+                        "targeted Codex Mach-O loader path is invalid"
+                    )
+                raw_name = os.pread(
+                    descriptor,
+                    command_size - name_offset,
+                    command_offset + name_offset,
+                )
+                name = raw_name.split(b"\0", 1)[0]
+                try:
+                    loader_path = name.decode("utf-8")
+                except UnicodeError as exc:
+                    raise RuntimeError(
+                        "targeted Codex Mach-O loader path is not UTF-8"
+                    ) from exc
+                if not loader_path.startswith(
+                    ("/usr/lib/", "/System/Library/")
+                ):
+                    raise RuntimeError(
+                        "targeted Codex Mach-O has a non-system dependency"
+                    )
+            command_offset += command_size
+        if command_offset != command_end:
+            raise RuntimeError(
+                "targeted Codex Mach-O command accounting is invalid"
+            )
+
+    magic = os.pread(descriptor, 4, 0)
+    if magic in {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf"}:
+        checked_slice(0, file_size)
+        return
+    fat_layouts = {
+        b"\xca\xfe\xba\xbe": (">", False),
+        b"\xbe\xba\xfe\xca": ("<", False),
+        b"\xca\xfe\xba\xbf": (">", True),
+        b"\xbf\xba\xfe\xca": ("<", True),
+    }
+    layout = fat_layouts.get(magic)
+    if layout is None:
+        raise RuntimeError("targeted Codex native executable is not Mach-O")
+    byte_order, fat64 = layout
+    fat_header = os.pread(descriptor, 8, 0)
+    if len(fat_header) != 8:
+        raise RuntimeError("targeted Codex universal header is truncated")
+    architecture_count = struct.unpack(f"{byte_order}I", fat_header[4:])[0]
+    entry_size = 32 if fat64 else 20
+    if (
+        architecture_count == 0
+        or architecture_count > 32
+        or 8 + architecture_count * entry_size > file_size
+    ):
+        raise RuntimeError("targeted Codex universal header is invalid")
+    slices: list[tuple[int, int]] = []
+    for index in range(architecture_count):
+        entry = os.pread(descriptor, entry_size, 8 + index * entry_size)
+        if len(entry) != entry_size:
+            raise RuntimeError("targeted Codex universal entry is truncated")
+        if fat64:
+            slice_offset, slice_size = struct.unpack_from(
+                f"{byte_order}QQ", entry, 8
+            )
+        else:
+            slice_offset, slice_size = struct.unpack_from(
+                f"{byte_order}II", entry, 8
+            )
+        slices.append((slice_offset, slice_size))
+    sorted_slices = sorted(slices)
+    for index, (slice_offset, slice_size) in enumerate(sorted_slices):
+        if index:
+            previous_offset, previous_size = sorted_slices[index - 1]
+            if slice_offset < previous_offset + previous_size:
+                raise RuntimeError("targeted Codex universal slices overlap")
+        checked_slice(slice_offset, slice_size)
+
+
 def _targeted_codex_executable() -> Path:
     selected = Path(CODEX_BIN) if "/" in CODEX_BIN else Path(shutil.which(CODEX_BIN) or "")
     try:
@@ -3964,10 +4190,15 @@ def _targeted_codex_executable() -> Path:
     descriptor = os.open(resolved, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
         header = os.pread(descriptor, 64, 0)
-        if len(header) < 52 or header[:4] != b"\x7fELF":
+        if header[:4] != b"\x7fELF":
+            if sys.platform == "darwin":
+                _validate_targeted_macho(descriptor, metadata.st_size)
+                return resolved
             raise RuntimeError(
                 "targeted Codex self-contained native executable must be ELF"
             )
+        if len(header) < 52:
+            raise RuntimeError("targeted Codex ELF header is truncated")
         elf_class = header[4]
         elf_data = header[5]
         if elf_data == 1:
@@ -4630,12 +4861,21 @@ def _preflight_targeted_snapshot_executables(snapshot_root: Path) -> None:
 
     path_parts = snapshot_root.parts
     inherited_fds: tuple[int, ...] = ()
+    descriptor_text: str | None = None
     if (
         len(path_parts) >= 5
         and path_parts[:4] == ("/", "proc", "self", "fd")
         and path_parts[4].isdigit()
     ):
-        inherited_fds = (int(path_parts[4]),)
+        descriptor_text = path_parts[4]
+    elif (
+        len(path_parts) >= 4
+        and path_parts[:3] == ("/", "dev", "fd")
+        and path_parts[3].isdigit()
+    ):
+        descriptor_text = path_parts[3]
+    if descriptor_text is not None:
+        inherited_fds = (int(descriptor_text),)
     commands = [
         [str(snapshot_root / "bin/codex"), "--version"],
         [
@@ -4657,7 +4897,7 @@ def _preflight_targeted_snapshot_executables(snapshot_root: Path) -> None:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+                env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
                 timeout=30,
                 check=False,
                 pass_fds=inherited_fds,
@@ -4949,7 +5189,7 @@ def _try_settle_collectible_ready_targeted_intent(
         expected_identity = (binding["st_dev"], binding["st_ino"])
         if (opened_attempt.st_dev, opened_attempt.st_ino) != expected_identity:
             return False
-        locked_dir = Path(f"/proc/self/fd/{attempt_fd}")
+        locked_dir = _descriptor_path(attempt_fd)
         try:
             raw_intent = _read_recovery_object(
                 locked_dir / "intent.json",
@@ -5544,7 +5784,7 @@ def _ensure_targeted_execution_snapshot(attempt_dir: Path) -> Dict[str, Any]:
             os.rename(temporary, snapshot_root)
             parent_fd = os.open(
                 attempt_dir,
-                # ``attempt_dir`` is intentionally the held /proc/self/fd
+                # ``attempt_dir`` is intentionally the held descriptor path
                 # handle yielded by _targeted_attempt_lock, so following this
                 # one kernel fd link preserves the inode fence.
                 os.O_RDONLY | os.O_DIRECTORY,
@@ -7101,7 +7341,7 @@ def _verification_attempt_lock(verification_attempt_id: str) -> Any:
             raise HTTPException(
                 status_code=409, detail="verifier pass recovery path changed"
             )
-        yield Path(f"/proc/self/fd/{attempt_fd}")
+        yield _descriptor_path(attempt_fd)
     finally:
         if lock_fd >= 0:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -7204,7 +7444,7 @@ def _verification_attempt_status_lock(
             raise HTTPException(
                 status_code=409, detail="verifier pass recovery path changed"
             )
-        yield Path(f"/proc/self/fd/{attempt_fd}")
+        yield _descriptor_path(attempt_fd)
     finally:
         if lock_fd >= 0:
             if lock_acquired:
@@ -7470,7 +7710,7 @@ def _targeted_attempt_lock(targeted_attempt_id: str) -> Any:
             # Every state operation resolves through the held directory fd, so
             # a pathname rotation cannot redirect writes into a replacement
             # attempt tree while a model is running.
-            yield Path(f"/proc/self/fd/{attempt_fd}"), expected
+            yield _descriptor_path(attempt_fd), expected
             _assert_targeted_attempt_binding(attempt_dir, expected)
         finally:
             os.close(attempt_fd)
@@ -11234,6 +11474,254 @@ def verify_blueprint(
 
 app = FastAPI(title="Verification Agent API", version=VERIFIER_SERVICE_VERSION)
 
+_AUTH_FAILURE_LOCK = threading.Lock()
+_AUTH_FAILURES: Dict[str, List[float]] = {}
+_AUTH_FAILURE_WINDOW_SECONDS = 60.0
+_AUTH_FAILURE_LIMIT = 10
+_READY_LOCK = threading.Lock()
+_READY_CACHE: tuple[float, Dict[str, Any], int] | None = None
+
+
+def _host_is_loopback(host: str) -> bool:
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _api_token_has_256_bits(token: str) -> bool:
+    """Accept only a 32-byte random hex or URL-safe base64 token."""
+
+    try:
+        if re.fullmatch(r"[0-9a-fA-F]{64,}", token) is not None:
+            decoded = bytes.fromhex(token)
+        elif re.fullmatch(r"[A-Za-z0-9_-]{43,}", token) is not None:
+            padding = "=" * ((4 - len(token) % 4) % 4)
+            decoded = base64.urlsafe_b64decode(token + padding)
+        else:
+            return False
+    except (ValueError, binascii.Error):
+        return False
+    return len(decoded) >= 32 and len(set(decoded)) >= 12
+
+
+def _auth_failure_blocked(client: str, *, record: bool) -> bool:
+    now = time.monotonic()
+    cutoff = now - _AUTH_FAILURE_WINDOW_SECONDS
+    with _AUTH_FAILURE_LOCK:
+        recent = [item for item in _AUTH_FAILURES.get(client, []) if item >= cutoff]
+        if record:
+            recent.append(now)
+        if recent:
+            _AUTH_FAILURES[client] = recent[-_AUTH_FAILURE_LIMIT:]
+        else:
+            _AUTH_FAILURES.pop(client, None)
+        if len(_AUTH_FAILURES) > 4096:
+            oldest = min(
+                _AUTH_FAILURES,
+                key=lambda key: _AUTH_FAILURES[key][-1],
+            )
+            _AUTH_FAILURES.pop(oldest, None)
+        return len(recent) >= _AUTH_FAILURE_LIMIT
+
+
+def _clear_auth_failures(client: str) -> None:
+    with _AUTH_FAILURE_LOCK:
+        _AUTH_FAILURES.pop(client, None)
+
+
+def _readiness_storage_check(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    metadata = root.lstat()
+    if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeError("readiness storage root is unsafe")
+    with tempfile.TemporaryDirectory(prefix=".axiom-ready-", dir=root) as raw:
+        probe = Path(raw)
+        descriptor = os.open(
+            probe / "lock",
+            os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.write(descriptor, b"ready")
+            os.fsync(descriptor)
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+        directory_fd = os.open(
+            probe,
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+
+def _compute_readiness() -> tuple[Dict[str, Any], int]:
+    checks: Dict[str, bool] = {}
+    failures: List[str] = []
+
+    def check(name: str, operation: Callable[[], None]) -> None:
+        try:
+            operation()
+        except Exception:  # noqa: BLE001 - readiness reports bounded check ids
+            checks[name] = False
+            failures.append(name)
+        else:
+            checks[name] = True
+
+    def check_platform() -> None:
+        if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
+            raise RuntimeError("unsupported platform")
+        if not (sys.version_info >= (3, 11) and sys.version_info < (3, 14)):
+            raise RuntimeError("unsupported Python")
+        _descriptor_path(0)
+
+    check("platform_runtime", check_platform)
+    check("mcp_runtime", _require_mcp_runtime)
+    check("work_storage", lambda: _readiness_storage_check(RESULTS_ROOT))
+    check(
+        "targeted_storage",
+        lambda: _readiness_storage_check(TARGETED_CONTROL_ROOT),
+    )
+
+    codex_holder: List[Path] = []
+
+    def check_codex_executable() -> None:
+        codex_holder.append(_targeted_codex_executable())
+
+    check("codex_executable", check_codex_executable)
+
+    def check_codex_auth() -> None:
+        if not codex_holder:
+            raise RuntimeError("Codex executable unavailable")
+        completed = subprocess.run(
+            [str(codex_holder[0]), "login", "status"],
+            cwd=str(WORK_DIR),
+            env=_codex_environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("Codex is not authenticated")
+
+    check("codex_auth", check_codex_auth)
+
+    def check_codex_sandbox() -> None:
+        if not codex_holder:
+            raise RuntimeError("Codex executable unavailable")
+        with tempfile.TemporaryDirectory(
+            prefix=".axiom-sandbox-ready-", dir=RESULTS_ROOT
+        ) as raw:
+            probe_root = Path(raw)
+            allowed = probe_root / "allowed"
+            denied = probe_root / "denied"
+            allowed.mkdir()
+            denied.mkdir()
+            (allowed / "input").write_text("ok", encoding="utf-8")
+            (denied / "secret").write_text("no", encoding="utf-8")
+            filesystem = (
+                "{\":minimal\"=\"read\","
+                + json.dumps(str(codex_holder[0]))
+                + "=\"read\","
+                + json.dumps(str(allowed))
+                + "=\"write\","
+                + json.dumps(str(denied))
+                + "=\"deny\"}"
+            )
+            completed = subprocess.run(
+                [
+                    str(codex_holder[0]),
+                    "sandbox",
+                    "--permission-profile",
+                    "axiom-ready",
+                    "-c",
+                    f"permissions.axiom-ready.filesystem={filesystem}",
+                    "-c",
+                    "permissions.axiom-ready.network.enabled=false",
+                    "-C",
+                    str(allowed),
+                    "--",
+                    "/bin/sh",
+                    "-c",
+                    (
+                        'test "$(cat "$1")" = ok && '
+                        'test ! -r "$2" && : > "$3"'
+                    ),
+                    "axiom-ready",
+                    str(allowed / "input"),
+                    str(denied / "secret"),
+                    str(allowed / "output"),
+                ],
+                cwd=str(allowed),
+                env=_codex_environment(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+                check=False,
+            )
+            if completed.returncode != 0 or not (allowed / "output").is_file():
+                raise RuntimeError("Codex permission-profile sandbox failed")
+
+    check("codex_sandbox", check_codex_sandbox)
+
+    claude_backends = [
+        backend
+        for backend in VERIFIER_BACKENDS.values()
+        if backend.adapter == "claude_cli"
+    ]
+    if claude_backends:
+        claude_holder: List[Path] = []
+
+        def check_claude_executable() -> None:
+            claude_holder.append(_trusted_claude_executable())
+
+        check("claude_executable", check_claude_executable)
+
+        def check_claude_auth() -> None:
+            if not claude_holder:
+                raise RuntimeError("Claude executable unavailable")
+            for backend in claude_backends:
+                _require_claude_auth(
+                    claude_holder[0],
+                    backend=backend,
+                    environment=_claude_environment(),
+                )
+            if any(backend.provider == "vertex" for backend in claude_backends):
+                _require_vertex_adc_readiness()
+
+        check("claude_auth", check_claude_auth)
+
+    remote_binding = not _host_is_loopback(VERIFY_SERVER_HOST)
+    checks["remote_transport"] = (
+        not remote_binding
+        or (
+            VERIFY_TLS_TERMINATED
+            and _api_token_has_256_bits(VERIFY_API_TOKEN)
+        )
+    )
+    if not checks["remote_transport"]:
+        failures.append("remote_transport")
+    status_code = 200 if not failures else 503
+    return (
+        {
+            "schema_version": "axiom_relay_verifier_readiness_v1",
+            "status": "ready" if status_code == 200 else "not_ready",
+            "platform": "macos" if sys.platform == "darwin" else sys.platform,
+            "checks": checks,
+            "failed_checks": failures,
+        },
+        status_code,
+    )
+
 
 def _loopback_client(request: Request) -> bool:
     if request.client is None:
@@ -11256,15 +11744,48 @@ async def protect_verification_endpoint(request: Request, call_next: Any) -> Any
     ):
         return await call_next(request)
     authorization = request.headers.get("authorization")
+    client = request.client.host if request.client is not None else "unknown"
+    remote_request = not _loopback_client(request)
+    remote_binding = not _host_is_loopback(VERIFY_SERVER_HOST)
+    if (remote_request or remote_binding) and not VERIFY_TLS_TERMINATED:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "remote verification requires TLS termination"},
+        )
+    if (remote_request or remote_binding) and not VERIFY_API_TOKEN:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "remote verification requests require VERIFY_API_TOKEN"
+            },
+        )
+    if (remote_request or remote_binding) and not _api_token_has_256_bits(
+        VERIFY_API_TOKEN
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "remote verification token is not 256-bit"},
+        )
+    if _auth_failure_blocked(client, record=False):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "verification authentication is rate limited"},
+        )
     if VERIFY_API_TOKEN:
         expected = f"Bearer {VERIFY_API_TOKEN}"
         if authorization is None or not hmac.compare_digest(authorization, expected):
-            return JSONResponse(status_code=401, content={"detail": "invalid verification API token"})
-    elif not _loopback_client(request):
-        return JSONResponse(
-            status_code=403,
-            content={"detail": "remote verification requests require VERIFY_API_TOKEN"},
-        )
+            limited = _auth_failure_blocked(client, record=True)
+            return JSONResponse(
+                status_code=429 if limited else 401,
+                content={
+                    "detail": (
+                        "verification authentication is rate limited"
+                        if limited
+                        else "invalid verification API token"
+                    )
+                },
+            )
+        _clear_auth_failures(client)
     if request.method == "GET" and (
         request.url.path.startswith("/verify-targeted-claim/status/")
         or request.url.path.startswith("/verify/status/")
@@ -11349,6 +11870,22 @@ def health() -> Dict[str, Any]:
             "operational_resume_budget": VERIFY_MAX_OPERATIONAL_RESUMES,
         },
     }
+
+
+@app.get("/ready")
+def ready() -> Any:
+    global _READY_CACHE
+
+    with _READY_LOCK:
+        now = time.monotonic()
+        if _READY_CACHE is None or now - _READY_CACHE[0] > 5.0:
+            body, status_code = _compute_readiness()
+            _READY_CACHE = (now, body, status_code)
+        else:
+            _timestamp, body, status_code = _READY_CACHE
+    if status_code != 200:
+        return JSONResponse(status_code=status_code, content=body)
+    return body
 
 
 @app.get("/profile")

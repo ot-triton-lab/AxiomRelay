@@ -5,16 +5,34 @@
 # through the role-gated root MCP.
 set -euo pipefail
 
+if (( BASH_VERSINFO[0] < 5 )); then
+  echo "AxiomRelay requires Bash 5 or newer (macOS: brew install bash)." >&2
+  exit 1
+fi
+
+descriptor_root=""
+for candidate in "/proc/$$/fd" /dev/fd; do
+  if [[ -d "$candidate" ]]; then
+    descriptor_root="$candidate"
+    break
+  fi
+done
+if [[ -z "$descriptor_root" ]]; then
+  echo "Could not locate a descriptor filesystem (/proc/.../fd or /dev/fd)." >&2
+  exit 70
+fi
+
 # Bash keeps the script image it is actually executing on fd 255. Duplicate
 # that inode before consulting the mutable launcher pathname, so an atomic
 # A->B deployment cannot cause an A process to label itself as B.
 root_launcher_shell_pid="$$"
-if [[ ! -r "/proc/${root_launcher_shell_pid}/fd/255" ]] \
-   || ! exec {root_launcher_image_fd}<"/proc/${root_launcher_shell_pid}/fd/255"; then
+root_launcher_shell_image="$descriptor_root/255"
+if [[ ! -r "$root_launcher_shell_image" ]] \
+   || ! exec {root_launcher_image_fd}<"$root_launcher_shell_image"; then
   echo "Could not bind the executing Claude root launcher image." >&2
   exit 70
 fi
-root_launcher_image_path="/proc/${root_launcher_shell_pid}/fd/${root_launcher_image_fd}"
+root_launcher_image_path="$descriptor_root/${root_launcher_image_fd}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CLAUDE_CORE_SOURCE="$ROOT_DIR/../claude_core.py"
@@ -65,21 +83,33 @@ TAKEOVER_SELECTION="${RETHLAS_CLAUDE_ROOT_TAKEOVER_FROM:-}"
 CANARY_SELECTION="${RETHLAS_CLAUDE_ROOT_CANARY:-0}"
 OWNER_PROMPT_SELECTION="${RETHLAS_CLAUDE_ROOT_OWNER_PROMPT:-}"
 CONTEXT_WINDOW_SELECTION="${RETHLAS_CLAUDE_CONTEXT_WINDOW:-}"
+CLAUDE_AUTH_MODE_SELECTION="${AXIOM_RELAY_CLAUDE_AUTH_MODE:-auto}"
 CLAUDE_RESPONSE_SEGMENT_TOKENS="48000"
 CLAUDE_MAX_OUTPUT_TOKENS="${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-$CLAUDE_RESPONSE_SEGMENT_TOKENS}"
 CLAUDE_VERTEX_THINKING_BODY='{"thinking":{"type":"adaptive","display":"summarized"}}'
 MCP_APPROVAL_SETTINGS='{"enabledMcpjsonServers":["rethlas-root"]}'
 CLAUDE_ALLOWED_TOOLS='Read,mcp__rethlas-root__memory_search,mcp__rethlas-root__memory_append_batch,mcp__rethlas-root__search_matlas_theorems,mcp__rethlas-root__search_arxiv_theorems,mcp__rethlas-root__read_arxiv_primary,mcp__rethlas-root__prepare_pro_gap_query,mcp__rethlas-root__get_pro_gap_query,mcp__rethlas-root__ingest_pro_gap_response,mcp__rethlas-root__get_pro_gap_response,mcp__rethlas-root__run_three_route_cohort,mcp__rethlas-root__edit_blueprint,mcp__rethlas-root__write_blueprint,mcp__rethlas-root__verify_blueprint_service'
-VERIFY_HEALTH_URL="${VERIFY_HEALTH_URL:-${VERIFY_URL:-http://127.0.0.1:8091/health}}"
-verify_base_url="${VERIFY_HEALTH_URL%/health}"
+if [[ -n "${VERIFY_READY_URL:-}" ]]; then
+  verify_base_url="${VERIFY_READY_URL%/ready}"
+elif [[ -n "${VERIFY_HEALTH_URL:-}" ]]; then
+  verify_base_url="${VERIFY_HEALTH_URL%/health}"
+elif [[ -n "${VERIFY_URL:-}" ]]; then
+  verify_base_url="${VERIFY_URL%/health}"
+  verify_base_url="${verify_base_url%/ready}"
+else
+  verify_base_url="http://127.0.0.1:8091"
+fi
+VERIFY_READY_URL="${VERIFY_READY_URL:-${verify_base_url%/}/ready}"
+VERIFY_HEALTH_URL="${VERIFY_HEALTH_URL:-${verify_base_url%/}/health}"
 VERIFY_PROOF_URL="${VERIFY_PROOF_URL:-${verify_base_url%/}/verify}"
-export VERIFY_HEALTH_URL VERIFY_PROOF_URL
+export VERIFY_READY_URL VERIFY_HEALTH_URL VERIFY_PROOF_URL
 unset RETHLAS_MAIN_AGENT RETHLAS_CLAUDE_BIN RETHLAS_CLAUDE_ROOT_PRINT_CMD
 unset RETHLAS_CLAUDE_CODEX_BIN
 unset RETHLAS_MODEL_POLICY_PROFILE CLAUDE_CODE_MAX_OUTPUT_TOKENS
 unset RETHLAS_CLAUDE_ROOT_SESSION_ID RETHLAS_CLAUDE_ROOT_TAKEOVER_FROM
 unset RETHLAS_CLAUDE_ROOT_CANARY
 unset RETHLAS_CLAUDE_ROOT_OWNER_PROMPT RETHLAS_CLAUDE_CONTEXT_WINDOW
+unset AXIOM_RELAY_CLAUDE_AUTH_MODE
 unset RETHLAS_CLAUDE_ROOT_ORCHESTRATION_MODE
 unset RETHLAS_CLAUDE_ROOT_PYTHON_RUNTIME_SHA256
 unset RETHLAS_CLAUDE_ROOT_LAUNCHER_SHA256
@@ -116,6 +146,10 @@ esac
 case "$MODEL_POLICY_PROFILE" in
   compatible|balanced|economy|max_diversity) ;;
   *) echo "Unsupported RETHLAS_MODEL_POLICY_PROFILE: $MODEL_POLICY_PROFILE" >&2; exit 1 ;;
+esac
+case "$CLAUDE_AUTH_MODE_SELECTION" in
+  auto|subscription|api|vertex|bedrock|foundry) ;;
+  *) echo "AXIOM_RELAY_CLAUDE_AUTH_MODE must be auto, subscription, api, vertex, bedrock, or foundry." >&2; exit 1 ;;
 esac
 if [[ "$CLAUDE_ORCHESTRATION_MODE" == opus_sol_council_v2 ]]; then
   if [[ "$MODEL_POLICY_PROFILE_WAS_EXPLICIT" == 1 \
@@ -176,10 +210,6 @@ if [[ -L "$python_origin" || ! -f "$python_origin" \
   echo "Claude root requires a copied Python interpreter and a safe runtime deployment lock path." >&2
   exit 1
 fi
-if ! command -v flock >/dev/null 2>&1; then
-  echo "flock is required to pin the Claude Python runtime." >&2
-  exit 1
-fi
 # ``.lock`` is intentionally runtime state rather than a tracked venv file.
 # Create it durably on the first clean-checkout launch, then bind its inode
 # before asking flock to join the deployment epoch.
@@ -238,9 +268,18 @@ then
   exit 70
 fi
 exec {python_runtime_lock_fd}<>"$python_runtime_lock"
-flock -s "$python_runtime_lock_fd"
+if ! "$python_origin" -I -S -B - "$python_runtime_lock_fd" <<'PY'
+import fcntl
+import sys
+
+fcntl.flock(int(sys.argv[1]), fcntl.LOCK_SH)
+PY
+then
+  echo "Could not lock the Claude Python runtime deployment epoch." >&2
+  exit 70
+fi
 exec {python_source_fd}<"$python_origin"
-python_bootstrap="/proc/$$/fd/$python_source_fd"
+python_bootstrap="$descriptor_root/$python_source_fd"
 pinned_python_binding=()
 mapfile -t pinned_python_binding < <(
   "$python_bootstrap" -I -S -B - \
@@ -960,11 +999,16 @@ if [[ "$CLAUDE_VERTEX_ENVIRONMENT_INHERITED" == 1 \
   CLAUDE_VERTEX_ENVIRONMENT_INCOMPLETE=0
   CLAUDE_PROVIDER_PROJECTION="vertex-process-plus-host-model-default"
 fi
+default_claude_config_root=""
+if [[ -n "${HOME:-}" ]]; then
+  default_claude_config_root="${HOME%/}/.claude"
+fi
+claude_config_root="${CLAUDE_CONFIG_DIR:-$default_claude_config_root}"
 if [[ "$CLAUDE_VERTEX_ENVIRONMENT_INCOMPLETE" == 1 \
       || -z "${CLAUDE_CODE_USE_VERTEX:-}" ]] \
-   && [[ -n "${HOME:-}" \
-      && -e "${HOME%/}/.claude/settings.json" ]]; then
-  claude_user_settings="${HOME%/}/.claude/settings.json"
+   && [[ -n "$claude_config_root" \
+      && -e "${claude_config_root%/}/settings.json" ]]; then
+  claude_user_settings="${claude_config_root%/}/settings.json"
   if ! vertex_projection="$(
     RETHLAS_PROVIDER_MODEL_ENV="$CLAUDE_PROVIDER_MODEL_ENV" \
     "$PYTHON_BIN" -I -B - "$claude_user_settings" <<'PY'
@@ -1089,11 +1133,11 @@ if [[ "$claude_command" != /* || ! -x "$claude_command" ]]; then
   echo "Claude CLI must resolve to an absolute executable." >&2
   exit 1
 fi
-if ! command -v realpath >/dev/null 2>&1; then
-  echo "realpath is required to validate the Claude CLI." >&2
-  exit 1
-fi
-claude_target="$(realpath "$claude_command" || true)"
+claude_target="$(
+  "$PYTHON_BIN" -I -S -B -c \
+    'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' \
+    "$claude_command" 2>/dev/null || true
+)"
 if [[ "$claude_target" != /* || ! -f "$claude_target" \
    || -L "$claude_target" || ! -x "$claude_target" ]]; then
   echo "Claude CLI target must be a regular executable." >&2
@@ -1217,6 +1261,30 @@ elif [[ "${CLAUDE_CODE_USE_FOUNDRY:-}" =~ ^(1|true|TRUE)$ ]]; then
 else
   CLAUDE_PROVIDER="anthropic"
 fi
+case "$CLAUDE_AUTH_MODE_SELECTION" in
+  auto) ;;
+  subscription)
+    if [[ "$CLAUDE_PROVIDER" != anthropic \
+       || -n "${ANTHROPIC_API_KEY:-}" \
+       || -n "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
+      echo "subscription auth mode rejects cloud-provider and API-key precedence." >&2
+      exit 1
+    fi
+    ;;
+  api)
+    if [[ "$CLAUDE_PROVIDER" != anthropic \
+       || -z "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
+      echo "api auth mode requires an Anthropic API credential and no cloud provider." >&2
+      exit 1
+    fi
+    ;;
+  vertex|bedrock|foundry)
+    if [[ "$CLAUDE_PROVIDER" != "$CLAUDE_AUTH_MODE_SELECTION" ]]; then
+      echo "Claude provider does not match AXIOM_RELAY_CLAUDE_AUTH_MODE=$CLAUDE_AUTH_MODE_SELECTION." >&2
+      exit 1
+    fi
+    ;;
+esac
 CLAUDE_THINKING_DISPLAY_PROJECTION="provider-default"
 if [[ "$CLAUDE_PROVIDER" == vertex ]]; then
   if [[ -n "${CLAUDE_CODE_EXTRA_BODY:-}" \
@@ -1230,31 +1298,8 @@ elif [[ -n "${CLAUDE_CODE_EXTRA_BODY:-}" ]]; then
   echo "Claude roots reject an inherited CLAUDE_CODE_EXTRA_BODY outside the bound Vertex projection." >&2
   exit 1
 fi
-provider_binding_sha256="$({
-  RETHLAS_PROVIDER="$CLAUDE_PROVIDER" \
-  RETHLAS_LAUNCH_MODEL="$CLAUDE_LAUNCH_MODEL" \
-  RETHLAS_CONTEXT_WINDOW="$CLAUDE_CONTEXT_WINDOW" \
-  RETHLAS_PROVIDER_MODEL_ENV="$CLAUDE_PROVIDER_MODEL_ENV" \
-  "$PYTHON_BIN" -I -B - <<'PY'
-import hashlib
-import json
-import os
-
-project = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID", "")
-model_env = os.environ["RETHLAS_PROVIDER_MODEL_ENV"]
-body = {
-    "provider": os.environ["RETHLAS_PROVIDER"],
-    "launch_model": os.environ["RETHLAS_LAUNCH_MODEL"],
-    "context_window": int(os.environ["RETHLAS_CONTEXT_WINDOW"]),
-    "region": os.environ.get("CLOUD_ML_REGION", ""),
-    "provider_model_env": model_env,
-    "provider_model": os.environ.get(model_env, ""),
-    "project_sha256": hashlib.sha256(project.encode()).hexdigest() if project else None,
-}
-encoded = json.dumps(body, allow_nan=False, sort_keys=True, separators=(",", ":")).encode()
-print(hashlib.sha256(encoded).hexdigest())
-PY
-})"
+CLAUDE_OBSERVED_AUTH_METHOD="unprobed_print_only"
+CLAUDE_OBSERVED_SUBSCRIPTION_TYPE=""
 if [[ "$CODEX_SELECTION" == */* ]]; then
   codex_command="$CODEX_SELECTION"
 else
@@ -1264,7 +1309,11 @@ if [[ "$codex_command" != /* || ! -x "$codex_command" ]]; then
   echo "Codex CLI must resolve to an absolute executable." >&2
   exit 1
 fi
-codex_target="$(realpath "$codex_command" || true)"
+codex_target="$(
+  "$PYTHON_BIN" -I -S -B -c \
+    'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' \
+    "$codex_command" 2>/dev/null || true
+)"
 if [[ "$codex_target" != /* || ! -f "$codex_target" \
    || -L "$codex_target" || ! -x "$codex_target" ]]; then
   echo "Codex CLI target must be a regular executable." >&2
@@ -1442,6 +1491,66 @@ if ((reference_candidate_count > 0)); then
   fi
   candidate_projection_add_dir=(--add-dir "$candidate_projection_dir")
 fi
+if [[ "$PRINT_COMMAND" == 0 ]] && ! "$PYTHON_BIN" -I -S -B - \
+  "$codex_command" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+codex = pathlib.Path(sys.argv[1])
+with tempfile.TemporaryDirectory(prefix="axiom-relay-sandbox-ready-") as raw:
+    root = pathlib.Path(raw)
+    allowed = root / "allowed"
+    denied = root / "denied"
+    allowed.mkdir()
+    denied.mkdir()
+    (allowed / "input").write_text("ok", encoding="utf-8")
+    (denied / "secret").write_text("no", encoding="utf-8")
+    filesystem = (
+        '{":minimal"="read",'
+        + json.dumps(str(codex))
+        + '="read",'
+        + json.dumps(str(allowed))
+        + '="write",'
+        + json.dumps(str(denied))
+        + '="deny"}'
+    )
+    completed = subprocess.run(
+        [
+            str(codex),
+            "sandbox",
+            "--permission-profile",
+            "axiom-ready",
+            "-c",
+            f"permissions.axiom-ready.filesystem={filesystem}",
+            "-c",
+            "permissions.axiom-ready.network.enabled=false",
+            "-C",
+            str(allowed),
+            "--",
+            "/bin/sh",
+            "-c",
+            'test "$(cat "$1")" = ok && test ! -r "$2" && : > "$3"',
+            "axiom-ready",
+            str(allowed / "input"),
+            str(denied / "secret"),
+            str(allowed / "output"),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0 or not (allowed / "output").is_file():
+        raise SystemExit(1)
+PY
+then
+  echo "Codex permission-profile sandbox is unavailable; refusing paid Claude root start." >&2
+  exit 1
+fi
 if [[ "$PRINT_COMMAND" == 0 ]] \
    && ! "$codex_command" login status >/dev/null 2>&1; then
   echo "Codex CLI is not logged in; refusing Claude root start before any paid turn." >&2
@@ -1452,9 +1561,11 @@ if [[ "$PRINT_COMMAND" == 0 ]]; then
     echo "Claude CLI auth/model provider is unavailable; refusing root preparation." >&2
     exit 1
   fi
-  if ! RETHLAS_CLAUDE_AUTH_JSON="$claude_auth_json" \
-       RETHLAS_EXPECTED_PROVIDER="$CLAUDE_PROVIDER" \
-       "$PYTHON_BIN" -I -B - <<'PY'
+  if ! claude_auth_binding_json="$({
+    RETHLAS_CLAUDE_AUTH_JSON="$claude_auth_json" \
+    RETHLAS_EXPECTED_PROVIDER="$CLAUDE_PROVIDER" \
+    RETHLAS_EXPECTED_AUTH_MODE="$CLAUDE_AUTH_MODE_SELECTION" \
+      "$PYTHON_BIN" -I -B - <<'PY'
 import json
 import os
 
@@ -1473,20 +1584,103 @@ allowed = {
 }
 if value.get("apiProvider") not in allowed[expected]:
     raise SystemExit(1)
+auth_method = value.get("authMethod")
+subscription_type = value.get("subscriptionType")
+if (
+    not isinstance(auth_method, str)
+    or not auth_method
+    or len(auth_method.encode("utf-8")) > 128
+    or (
+        subscription_type is not None
+        and (
+            not isinstance(subscription_type, str)
+            or len(subscription_type.encode("utf-8")) > 128
+        )
+    )
+):
+    raise SystemExit(1)
+subscription_type = subscription_type or ""
+mode = os.environ["RETHLAS_EXPECTED_AUTH_MODE"]
+if mode == "subscription" and (
+    expected != "anthropic"
+    or auth_method != "claude.ai"
+    or not subscription_type
+):
+    raise SystemExit(1)
+if mode == "api" and (expected != "anthropic" or auth_method != "api_key"):
+    raise SystemExit(1)
+if mode in {"vertex", "bedrock", "foundry"} and auth_method != "third_party":
+    raise SystemExit(1)
+print(
+    json.dumps(
+        {
+            "auth_method": auth_method,
+            "subscription_type": subscription_type,
+        },
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+)
 PY
-  then
-    echo "Claude CLI auth status does not match the bound provider." >&2
+  })"; then
+    echo "Claude CLI auth status does not match the bound provider/auth mode." >&2
     exit 1
   fi
-  unset claude_auth_json
+  if ! CLAUDE_OBSERVED_AUTH_METHOD="$({
+    RETHLAS_AUTH_BINDING_JSON="$claude_auth_binding_json" \
+      "$PYTHON_BIN" -I -B -c \
+      'import json,os; print(json.loads(os.environ["RETHLAS_AUTH_BINDING_JSON"])["auth_method"])'
+  })" \
+     || ! CLAUDE_OBSERVED_SUBSCRIPTION_TYPE="$({
+    RETHLAS_AUTH_BINDING_JSON="$claude_auth_binding_json" \
+      "$PYTHON_BIN" -I -B -c \
+      'import json,os; print(json.loads(os.environ["RETHLAS_AUTH_BINDING_JSON"])["subscription_type"])'
+  })";
+  then
+    echo "Claude CLI auth binding could not be decoded." >&2
+    exit 70
+  fi
+  unset claude_auth_json claude_auth_binding_json
 fi
+provider_binding_sha256="$({
+  RETHLAS_PROVIDER="$CLAUDE_PROVIDER" \
+  RETHLAS_AUTH_MODE="$CLAUDE_AUTH_MODE_SELECTION" \
+  RETHLAS_AUTH_METHOD="$CLAUDE_OBSERVED_AUTH_METHOD" \
+  RETHLAS_SUBSCRIPTION_TYPE="$CLAUDE_OBSERVED_SUBSCRIPTION_TYPE" \
+  RETHLAS_LAUNCH_MODEL="$CLAUDE_LAUNCH_MODEL" \
+  RETHLAS_CONTEXT_WINDOW="$CLAUDE_CONTEXT_WINDOW" \
+  RETHLAS_PROVIDER_MODEL_ENV="$CLAUDE_PROVIDER_MODEL_ENV" \
+  "$PYTHON_BIN" -I -B - <<'PY'
+import hashlib
+import json
+import os
+
+project = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID", "")
+model_env = os.environ["RETHLAS_PROVIDER_MODEL_ENV"]
+body = {
+    "provider": os.environ["RETHLAS_PROVIDER"],
+    "auth_mode": os.environ["RETHLAS_AUTH_MODE"],
+    "auth_method": os.environ["RETHLAS_AUTH_METHOD"],
+    "subscription_type": os.environ["RETHLAS_SUBSCRIPTION_TYPE"],
+    "launch_model": os.environ["RETHLAS_LAUNCH_MODEL"],
+    "context_window": int(os.environ["RETHLAS_CONTEXT_WINDOW"]),
+    "region": os.environ.get("CLOUD_ML_REGION", ""),
+    "provider_model_env": model_env,
+    "provider_model": os.environ.get(model_env, ""),
+    "project_sha256": hashlib.sha256(project.encode()).hexdigest() if project else None,
+}
+encoded = json.dumps(body, allow_nan=False, sort_keys=True, separators=(",", ":")).encode()
+print(hashlib.sha256(encoded).hexdigest())
+PY
+})"
 if [[ "$PRINT_COMMAND" == 0 ]] \
-   && ! curl -sf --connect-timeout 2 --max-time 5 "$VERIFY_HEALTH_URL" >/dev/null; then
-  echo "Verifier is unavailable at $VERIFY_HEALTH_URL; refusing Claude root start." >&2
+   && ! curl -sf --connect-timeout 2 --max-time 30 "$VERIFY_READY_URL" >/dev/null; then
+  echo "Verifier is not ready at $VERIFY_READY_URL; refusing Claude root start." >&2
   exit 1
 fi
 if [[ "$PRINT_COMMAND" == 0 && "$MODEL_POLICY_PROFILE" != compatible ]]; then
-  verifier_profile_url="${VERIFY_HEALTH_URL%/health}/profile"
+  verifier_profile_url="${VERIFY_READY_URL%/ready}/profile"
   if ! verifier_profile_json="$(
     curl -sf --connect-timeout 2 --max-time 5 "$verifier_profile_url"
   )"; then
@@ -1681,6 +1875,7 @@ echo "Claude root CLI model: $CLAUDE_LAUNCH_MODEL"
 echo "Claude root response-segment output tokens: $CLAUDE_MAX_OUTPUT_TOKENS (cumulative unbounded)"
 echo "Claude provider projection: $CLAUDE_PROVIDER_PROJECTION"
 echo "Claude provider: $CLAUDE_PROVIDER"
+echo "Claude auth mode/method: $CLAUDE_AUTH_MODE_SELECTION/$CLAUDE_OBSERVED_AUTH_METHOD"
 echo "Claude thinking display projection: $CLAUDE_THINKING_DISPLAY_PROJECTION"
 echo "Claude provider binding SHA-256: $provider_binding_sha256"
 echo "Claude CLI SHA-256: $claude_cli_sha256"

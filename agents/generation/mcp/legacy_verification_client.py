@@ -716,14 +716,27 @@ def _atomic_replace_at(directory_fd: int, filename: str, content: bytes) -> tupl
             pass
 
 def _renameat2_at(directory_fd: int, source: str, destination: str, flags: int) -> None:
-    """Invoke Linux renameat2 without falling back to an unsafe blind rename."""
-    try:
-        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
-    except AttributeError as exc:
-        raise OSError(errno.ENOSYS, 'renameat2 is unavailable') from exc
-    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
-    renameat2.restype = ctypes.c_int
-    result = renameat2(directory_fd, os.fsencode(source), directory_fd, os.fsencode(destination), flags)
+    """Invoke the host's race-safe relative rename primitive."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == 'darwin':
+        try:
+            rename = libc.renameatx_np
+        except AttributeError as exc:
+            raise OSError(errno.ENOSYS, 'renameatx_np is unavailable') from exc
+        platform_flags = {0: 0, _RENAME_NOREPLACE: 4, _RENAME_EXCHANGE: 2}.get(flags)
+        if platform_flags is None:
+            raise OSError(errno.EINVAL, 'unsupported atomic rename flags')
+    elif sys.platform.startswith('linux'):
+        try:
+            rename = libc.renameat2
+        except AttributeError as exc:
+            raise OSError(errno.ENOSYS, 'renameat2 is unavailable') from exc
+        platform_flags = flags
+    else:
+        raise OSError(errno.ENOSYS, 'atomic relative rename is unavailable')
+    rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    rename.restype = ctypes.c_int
+    result = rename(directory_fd, os.fsencode(source), directory_fd, os.fsencode(destination), platform_flags)
     if result != 0:
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error), destination)
