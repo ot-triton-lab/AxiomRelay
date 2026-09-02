@@ -64,28 +64,88 @@ jobs:
 
       - name: Exercise the native Codex permission profile
         run: |
-          probe_root="$RUNNER_TEMP/axiom-relay-sandbox"
-          mkdir -p "$probe_root/allowed" "$probe_root/denied"
-          printf ok > "$probe_root/allowed/input"
-          printf no > "$probe_root/denied/secret"
-          codex_path="$(python -c 'import pathlib,shutil; print(pathlib.Path(shutil.which("codex")).resolve())')"
-          filesystem="$(python -c 'import json,sys; root,codex=sys.argv[1:]; print("{\":minimal\"=\"read\","+json.dumps(codex)+"=\"read\","+json.dumps(root+"/allowed")+"=\"write\","+json.dumps(root+"/denied")+"=\"deny\"}")' "$probe_root" "$codex_path")"
-          codex sandbox --permission-profile axiom-ci \
-            -c "permissions.axiom-ci.filesystem=$filesystem" \
-            -c 'permissions.axiom-ci.network.enabled=false' \
-            -C "$probe_root/allowed" -- /bin/sh -c \
-            'test "$(cat "$1")" = ok && test ! -r "$2" && : > "$3"' \
-            axiom-ci "$probe_root/allowed/input" "$probe_root/denied/secret" \
-            "$probe_root/allowed/output"
-          test -f "$probe_root/allowed/output"
+          diagnostic_log="$RUNNER_TEMP/axiom-relay-sandbox.log"
+          set +e
+          (
+            set -x
+            uname -a
+            codex --version
+            probe_root="$RUNNER_TEMP/axiom-relay-sandbox"
+            mkdir -p "$probe_root/allowed" "$probe_root/denied"
+            printf ok > "$probe_root/allowed/input"
+            printf no > "$probe_root/denied/secret"
+            codex_path="$(python -c 'import pathlib,shutil; print(pathlib.Path(shutil.which("codex")).resolve())')"
+            filesystem="$(python -c 'import json,sys; root,codex=sys.argv[1:]; print("{\":minimal\"=\"read\","+json.dumps(codex)+"=\"read\","+json.dumps(root+"/allowed")+"=\"write\","+json.dumps(root+"/denied")+"=\"deny\"}")' "$probe_root" "$codex_path")"
+            codex sandbox --permission-profile axiom-ci \
+              -c "permissions.axiom-ci.filesystem=$filesystem" \
+              -c 'permissions.axiom-ci.network.enabled=false' \
+              -C "$probe_root/allowed" -- /bin/sh -c \
+              'test "$(cat "$1")" = ok && test ! -r "$2" && : > "$3"' \
+              axiom-ci "$probe_root/allowed/input" "$probe_root/denied/secret" \
+              "$probe_root/allowed/output"
+            test -f "$probe_root/allowed/output"
+          ) 2>&1 | tee "$diagnostic_log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if (( status != 0 )); then
+            python - "$diagnostic_log" <<'PY'
+          import pathlib
+          import sys
+
+          text = pathlib.Path(sys.argv[1]).read_text(
+              encoding="utf-8", errors="replace"
+          )[-12000:]
+          escaped = (
+              text.replace("%", "%25")
+              .replace("\r", "%0D")
+              .replace("\n", "%0A")
+          )
+          print(f"::error title=Codex sandbox probe::{escaped}")
+          PY
+            exit "$status"
+          fi
 
       - name: Run platform-sensitive tests
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
-          agents/verification/.venv/bin/python -m pytest -q \
+          failures=0
+          run_test() {
+            local label="$1"
+            shift
+            local diagnostic_log="$RUNNER_TEMP/${label}.log"
+            set +e
+            "$@" 2>&1 | tee "$diagnostic_log"
+            local status=${PIPESTATUS[0]}
+            set -e
+            if (( status != 0 )); then
+              python - "$diagnostic_log" "$label" <<'PY'
+          import pathlib
+          import sys
+
+          text = pathlib.Path(sys.argv[1]).read_text(
+              encoding="utf-8", errors="replace"
+          )[-12000:]
+          escaped = (
+              text.replace("%", "%25")
+              .replace("\r", "%0D")
+              .replace("\n", "%0A")
+          )
+          print(f"::error title={sys.argv[2]}::{escaped}")
+          PY
+              failures=1
+            fi
+          }
+          run_test verification-api \
+            agents/verification/.venv/bin/python -m pytest -q \
             agents/verification/tests/test_api_server.py
-          agents/.generation-venv/bin/python -m pytest -q \
-            agents/generation/tests/test_claude_core.py \
-            agents/generation/tests/test_verification_client.py \
+          run_test claude-core \
+            agents/.generation-venv/bin/python -m pytest -q \
+            agents/generation/tests/test_claude_core.py
+          run_test verification-client \
+            agents/.generation-venv/bin/python -m pytest -q \
+            agents/generation/tests/test_verification_client.py
+          run_test runner-mock \
+            agents/.generation-venv/bin/python -m pytest -q \
             agents/generation/tests/test_runner_mock.py
+          exit "$failures"
