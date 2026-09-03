@@ -1010,7 +1010,9 @@ if [[ -n "${HOME:-}" ]]; then
   default_claude_config_root="${HOME%/}/.claude"
 fi
 claude_config_root="${CLAUDE_CONFIG_DIR:-$default_claude_config_root}"
-if [[ "$CLAUDE_VERTEX_ENVIRONMENT_INCOMPLETE" == 1 \
+if [[ "$CLAUDE_AUTH_MODE_SELECTION" == auto \
+      || "$CLAUDE_AUTH_MODE_SELECTION" == vertex ]] \
+   && [[ "$CLAUDE_VERTEX_ENVIRONMENT_INCOMPLETE" == 1 \
       || -z "${CLAUDE_CODE_USE_VERTEX:-}" ]] \
    && [[ -n "$claude_config_root" \
       && -e "${claude_config_root%/}/settings.json" ]]; then
@@ -1637,7 +1639,14 @@ if [[ "$PRINT_COMMAND" == 0 ]] \
   exit 1
 fi
 if [[ "$PRINT_COMMAND" == 0 ]]; then
-  if ! claude_auth_json="$($claude_command auth status 2>/dev/null)"; then
+  claude_auth_arguments=(auth status)
+  if [[ "$CLAUDE_AUTH_MODE_SELECTION" == subscription ]]; then
+    # Subscription OAuth can coexist with a user-level cloud-provider
+    # preference. Exclude user settings during preflight exactly as the
+    # eventual project-only Claude invocation does.
+    claude_auth_arguments=(--setting-sources project auth status)
+  fi
+  if ! claude_auth_json="$($claude_command "${claude_auth_arguments[@]}" 2>/dev/null)"; then
     echo "Claude CLI auth/model provider is unavailable; refusing root preparation." >&2
     exit 1
   fi

@@ -1638,7 +1638,10 @@ import sys
 if "--version" in sys.argv:
     print("2.1.246 (Claude Code mock)")
     raise SystemExit(0)
-if sys.argv[1:] == ["auth", "status"]:
+if sys.argv[1:] in (
+    ["auth", "status"],
+    ["--setting-sources", "project", "auth", "status"],
+):
     logged_in = os.environ.get("MOCK_CLAUDE_LOGGED_IN", "1") == "1"
     if os.environ.get("CLAUDE_CODE_USE_VERTEX") in {{"1", "true", "TRUE"}}:
         provider = "vertex"
@@ -4915,6 +4918,63 @@ def test_claude_root_subscription_uses_dedicated_config_directory(
     assert "Claude provider projection: cli-default" in completed.stdout
     assert "Claude provider: anthropic" in completed.stdout
     assert "must-not-leak" not in completed.stdout + completed.stderr
+
+
+def test_claude_root_subscription_ignores_default_vertex_settings(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    fake_home = tmp_path / "home"
+    home_settings = fake_home / ".claude" / "settings.json"
+    home_settings.parent.mkdir(parents=True)
+    home_settings.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "CLAUDE_CODE_USE_VERTEX": "1",
+                    "ANTHROPIC_VERTEX_PROJECT_ID": "must-not-leak",
+                    "CLOUD_ML_REGION": "global",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "must-not-leak",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_curl.chmod(0o755)
+    claude_calls = tmp_path / "claude-calls.jsonl"
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "HOME": str(fake_home),
+            "RETHLAS_RUN_MODE": "core",
+            "RETHLAS_MAIN_AGENT": "opus",
+            "AXIOM_RELAY_CLAUDE_AUTH_MODE": "subscription",
+            "MOCK_CLAUDE_AUTH_METHOD": "claude.ai",
+            "MOCK_CLAUDE_SUBSCRIPTION_TYPE": "max",
+            "MOCK_CLAUDE_CALLS_FILE": str(claude_calls),
+        },
+    )
+
+    completed = subprocess.run(
+        [str(runner)],
+        cwd=runner.parent.parent,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "Claude provider projection: cli-default" in completed.stdout
+    assert "Claude provider: anthropic" in completed.stdout
+    assert "Claude auth mode/method: subscription/claude.ai" in completed.stdout
+    assert "must-not-leak" not in completed.stdout + completed.stderr
+    assert len(claude_calls.read_text(encoding="utf-8").splitlines()) == 1
 
 
 def test_claude_root_subscription_binds_auth_method_before_paid_turn(
