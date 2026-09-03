@@ -1764,6 +1764,11 @@ def build_claude_command(
         command.extend(["--setting-sources", "project"])
     command.extend([
         "--safe-mode",
+        # Subscription sessions otherwise make a separate Haiku request to
+        # predict a next prompt.  That request is unrelated to verification
+        # and would correctly violate the single-model provenance gate below.
+        "--prompt-suggestions",
+        "false",
         "--print",
         "--output-format",
         "stream-json",

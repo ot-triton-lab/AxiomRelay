@@ -3656,6 +3656,7 @@ def test_cold_claude_verifier_is_toolless_ephemeral_and_contract_bound(
     assert arguments[arguments.index("--tools") + 1] == ""
     assert "--no-session-persistence" in arguments
     assert "--fallback-model" not in arguments
+    assert arguments[arguments.index("--prompt-suggestions") + 1] == "false"
     system_prompt = arguments[arguments.index("--system-prompt") + 1]
     assert "exactly one raw JSON object" in system_prompt
     assert '"output_schema_version"' in system_prompt
