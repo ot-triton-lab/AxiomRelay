@@ -744,7 +744,7 @@ entries: list[tuple[str, Path, Path, os.stat_result]] = []
 for path, logical_path in explicit:
     try:
         metadata = (
-            path.stat()
+            os.fstat(int(path.name))
             if logical_path == Path("tests/run_legacy.sh")
             and str(path).startswith(("/proc/self/fd/", "/dev/fd/"))
             else path.lstat()
@@ -824,9 +824,58 @@ for kind, path, logical_path, metadata in sorted(
         if total > 32_000_000:
             fail("trusted runtime files exceed 32 MB in total")
         digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            while chunk := handle.read(65536):
+        descriptor_backed_runner = (
+            logical_path == Path("tests/run_legacy.sh")
+            and str(path).startswith(("/proc/self/fd/", "/dev/fd/"))
+        )
+        if descriptor_backed_runner:
+            try:
+                descriptor = int(path.name)
+                opened = os.fstat(descriptor)
+            except (OSError, ValueError) as exc:
+                fail(f"cannot inspect owned legacy runner descriptor: {exc}")
+            identity = (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                stat.S_IMODE(opened.st_mode),
+            )
+            if identity != (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                stat.S_IMODE(metadata.st_mode),
+            ):
+                fail("owned legacy runner descriptor identity changed")
+            offset = 0
+            while offset < opened.st_size:
+                try:
+                    chunk = os.pread(
+                        descriptor,
+                        min(65_536, opened.st_size - offset),
+                        offset,
+                    )
+                except OSError as exc:
+                    fail(f"cannot read owned legacy runner descriptor: {exc}")
+                if not chunk:
+                    fail("owned legacy runner descriptor produced a short read")
                 digest.update(chunk)
+                offset += len(chunk)
+            after = os.fstat(descriptor)
+            if identity != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                stat.S_IMODE(after.st_mode),
+            ):
+                fail("owned legacy runner descriptor changed during hashing")
+        else:
+            with path.open("rb") as handle:
+                while chunk := handle.read(65536):
+                    digest.update(chunk)
         if (
             logical_path == Path("tests/run_legacy.sh")
             and expected_runner_sha256
@@ -860,7 +909,86 @@ mkdir -p "$trusted_runtime_dir/tests" "$trusted_runtime_dir/mcp"
 cp -p "$ROOT_DIR/AGENTS.legacy.md" "$trusted_runtime_dir/AGENTS.legacy.md"
 cp -p "$ROOT_DIR/requirements-math-research.txt" \
   "$trusted_runtime_dir/requirements-math-research.txt"
-cp -p "$LEGACY_RUNNER_SOURCE" "$trusted_runtime_dir/tests/run_legacy.sh"
+if [[ -n "$OWNED_RUNNER_FD" ]]; then
+  # Darwin's cp delegates regular-file copies to fcopyfile(3), which rejects
+  # /dev/fd/N even when N names an inherited regular-file descriptor.  Read
+  # the already authenticated descriptor positionally so the copy is portable
+  # and independent of any shared Darwin file offset.
+  "$TRUSTED_PYTHON_BIN" -I -S -B - \
+    "$OWNED_RUNNER_FD" "$trusted_runtime_dir/tests/run_legacy.sh" \
+    "$OWNED_RUNNER_SHA256" <<'PY'
+import hashlib
+import os
+import stat
+import sys
+
+source_descriptor = int(sys.argv[1])
+destination = os.fsencode(sys.argv[2])
+expected_sha256 = sys.argv[3]
+before = os.fstat(source_descriptor)
+if (
+    not stat.S_ISREG(before.st_mode)
+    or before.st_size <= 0
+    or before.st_size > 8_000_000
+):
+    raise SystemExit("owned legacy runner is not a bounded regular file")
+identity = (
+    before.st_dev,
+    before.st_ino,
+    before.st_size,
+    before.st_mtime_ns,
+    stat.S_IMODE(before.st_mode),
+)
+chunks = []
+offset = 0
+while offset < before.st_size:
+    chunk = os.pread(source_descriptor, min(65_536, before.st_size - offset), offset)
+    if not chunk:
+        raise SystemExit("owned legacy runner produced a short positional read")
+    chunks.append(chunk)
+    offset += len(chunk)
+raw = b"".join(chunks)
+after = os.fstat(source_descriptor)
+if identity != (
+    after.st_dev,
+    after.st_ino,
+    after.st_size,
+    after.st_mtime_ns,
+    stat.S_IMODE(after.st_mode),
+):
+    raise SystemExit("owned legacy runner changed during snapshot copy")
+if hashlib.sha256(raw).hexdigest() != expected_sha256:
+    raise SystemExit("owned legacy runner differs from its pinned SHA-256")
+
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+destination_descriptor = -1
+try:
+    destination_descriptor = os.open(destination, flags, identity[4])
+    view = memoryview(raw)
+    while view:
+        written = os.write(destination_descriptor, view)
+        if written <= 0:
+            raise SystemExit("owned legacy runner snapshot copy made no progress")
+        view = view[written:]
+    os.fchmod(destination_descriptor, identity[4])
+    os.fsync(destination_descriptor)
+except BaseException:
+    if destination_descriptor >= 0:
+        os.close(destination_descriptor)
+        destination_descriptor = -1
+    try:
+        os.unlink(destination)
+    except FileNotFoundError:
+        pass
+    raise
+finally:
+    if destination_descriptor >= 0:
+        os.close(destination_descriptor)
+PY
+else
+  cp -p "$LEGACY_RUNNER_SOURCE" "$trusted_runtime_dir/tests/run_legacy.sh"
+fi
 cp -pR "$ROOT_DIR/.codex" "$trusted_runtime_dir/.codex"
 cp -pR "$ROOT_DIR/.agents" "$trusted_runtime_dir/.agents"
 for module in __init__.py publication_proof_context_v3.py proof_context.py legacy_verification_client.py legacy_server.py; do
@@ -2593,6 +2721,73 @@ BASH
 )"
   elif [[ "$cohort_platform" == darwin ]]; then
     COHORT_ISOLATION_BACKEND="macos-codex-seatbelt"
+    if ! "$TRUSTED_PYTHON_BIN" -I -S -B - \
+        "$ROOT_DIR" "$problem_rel" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve(strict=True)
+parts = tuple(Path(sys.argv[2]).parts)
+if not parts or any(part in {"", ".", ".."} for part in parts):
+    raise SystemExit("invalid cohort problem id")
+allowed_uids = {0, os.geteuid()}
+directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+directory_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+root_descriptor = os.open(root, directory_flags)
+try:
+    for category in ("memory", "results"):
+        try:
+            os.mkdir(category, 0o700, dir_fd=root_descriptor)
+        except FileExistsError:
+            pass
+        descriptor = os.open(category, directory_flags, dir_fd=root_descriptor)
+        try:
+            metadata = os.fstat(descriptor)
+            observed = os.stat(
+                category, dir_fd=root_descriptor, follow_symlinks=False
+            )
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or not stat.S_ISDIR(observed.st_mode)
+                or metadata.st_uid not in allowed_uids
+                or stat.S_IMODE(metadata.st_mode) & 0o022
+                or (metadata.st_dev, metadata.st_ino)
+                != (observed.st_dev, observed.st_ino)
+            ):
+                raise SystemExit(f"unsafe cohort {category} root")
+            for part in parts:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+                child = os.open(part, directory_flags, dir_fd=descriptor)
+                metadata = os.fstat(child)
+                observed = os.stat(part, dir_fd=descriptor, follow_symlinks=False)
+                if (
+                    not stat.S_ISDIR(metadata.st_mode)
+                    or not stat.S_ISDIR(observed.st_mode)
+                    or metadata.st_uid not in allowed_uids
+                    or stat.S_IMODE(metadata.st_mode) & 0o022
+                    or (metadata.st_dev, metadata.st_ino)
+                    != (observed.st_dev, observed.st_ino)
+                ):
+                    os.close(child)
+                    raise SystemExit(f"unsafe cohort {category} path")
+                os.close(descriptor)
+                descriptor = child
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    os.fsync(root_descriptor)
+finally:
+    os.close(root_descriptor)
+PY
+    then
+      echo "Could not prepare isolated current-problem memory/results directories." >&2
+      exit 70
+    fi
     codex_profile_origin="${RETHLAS_COHORT_CODEX_BIN:-$CODEX_BIN}"
     if [[ "$codex_profile_origin" != /* ]]; then
       echo "macOS cohort isolation requires an absolute Codex executable origin." >&2

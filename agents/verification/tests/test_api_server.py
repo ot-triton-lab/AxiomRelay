@@ -3471,6 +3471,8 @@ def _install_fake_claude(
     *,
     payload: dict[str, Any],
     provider: str = "vertex",
+    auth_method: str = "third_party",
+    subscription_type: str | None = None,
     used_model: str = "claude-opus-5",
     usage_provider: str | None = None,
 ) -> tuple[Path, Path]:
@@ -3484,11 +3486,17 @@ import sys
 
 payload = json.loads({json.dumps(json.dumps(payload))})
 calls = os.environ.get("FAKE_CLAUDE_CALLS")
-if sys.argv[1:] == ["auth", "status"]:
+if sys.argv[1:] in (
+    ["auth", "status"],
+    ["--setting-sources", "project", "auth", "status"],
+):
     if calls:
         with open(calls, "a", encoding="utf-8") as handle:
             handle.write(json.dumps({{"kind": "auth", "argv": sys.argv[1:]}}) + "\\n")
-    print(json.dumps({{"loggedIn": True, "authMethod": "third_party", "apiProvider": {provider!r}}}))
+    auth = {{"loggedIn": True, "authMethod": {auth_method!r}, "apiProvider": {provider!r}}}
+    if {subscription_type!r} is not None:
+        auth["subscriptionType"] = {subscription_type!r}
+    print(json.dumps(auth))
     raise SystemExit(0)
 prompt = sys.stdin.read()
 if calls:
@@ -3690,6 +3698,7 @@ def test_cold_claude_verifier_is_toolless_ephemeral_and_contract_bound(
 def test_claude_environment_forwards_owned_liveness_controls_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("USER", "subscription-keychain-user")
     monkeypatch.setenv("API_TIMEOUT_MS", "1")
     monkeypatch.setenv("CLAUDE_STREAM_IDLE_TIMEOUT_MS", "1")
     monkeypatch.setenv("CLAUDE_CODE_MAX_RETRIES", "99")
@@ -3700,6 +3709,7 @@ def test_claude_environment_forwards_owned_liveness_controls_by_default(
 
     environment = server._claude_environment()
 
+    assert environment["USER"] == "subscription-keychain-user"
     assert environment["API_TIMEOUT_MS"] == str(server.CLAUDE_API_TIMEOUT_MS)
     assert environment["CLAUDE_STREAM_IDLE_TIMEOUT_MS"] == str(
         server.CLAUDE_STREAM_IDLE_TIMEOUT_MS
@@ -3761,6 +3771,50 @@ def test_claude_subscription_auth_binding_requires_subscription_identity(
         {"authMethod": "claude.ai", "subscriptionType": "pro"},
         expected_provider="anthropic",
     )
+
+
+def test_subscription_claude_commands_ignore_user_provider_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable, calls_path = _install_fake_claude(
+        tmp_path,
+        payload={},
+        provider="anthropic",
+        auth_method="claude.ai",
+        subscription_type="max",
+    )
+    backend = server.VerifierBackend(
+        adapter="claude_cli",
+        provider="anthropic",
+        model="claude-opus-5",
+        launch_model="claude-opus-5[1m]",
+        reasoning_effort="max",
+    )
+    monkeypatch.setattr(server, "VERIFY_CLAUDE_AUTH_MODE", "subscription")
+    monkeypatch.setattr(server, "VERIFY_CLAUDE_AUTH_METHOD", "claude.ai")
+    monkeypatch.setattr(server, "VERIFY_CLAUDE_SUBSCRIPTION_TYPE", "max")
+    environment = {"FAKE_CLAUDE_CALLS": str(calls_path)}
+
+    server._require_claude_auth(
+        executable,
+        backend=backend,
+        environment=environment,
+    )
+    command = server.build_claude_command(
+        executable=executable,
+        backend=backend,
+        schema={"type": "object"},
+    )
+
+    calls = [json.loads(line) for line in calls_path.read_text().splitlines()]
+    assert calls == [
+        {
+            "kind": "auth",
+            "argv": ["--setting-sources", "project", "auth", "status"],
+        }
+    ]
+    assert command[1:3] == ["--setting-sources", "project"]
 
 
 def test_claude_cloud_auth_binding_requires_third_party_method(

@@ -32,7 +32,10 @@ path = os.environ.get("FAKE_CLAUDE_CALLS")
 if path:
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(sys.argv[1:]) + "\\n")
-if sys.argv[1:] == ["auth", "status"]:
+if sys.argv[1:] in (
+    ["auth", "status"],
+    ["--setting-sources", "project", "auth", "status"],
+):
     value = {{
         "loggedIn": True,
         "authMethod": {auth_method!r},
@@ -377,7 +380,7 @@ def test_max_diversity_accepts_subscription_without_vertex_configuration(
         completed.stdout
     )
     assert [json.loads(line) for line in calls.read_text().splitlines()] == [
-        ["auth", "status"]
+        ["--setting-sources", "project", "auth", "status"]
     ]
 
 
@@ -411,7 +414,7 @@ def test_max_diversity_subscription_rejects_stored_api_auth(
     assert completed.returncode == 1
     assert "requires a Claude subscription" in completed.stderr
     assert [json.loads(line) for line in calls.read_text().splitlines()] == [
-        ["auth", "status"]
+        ["--setting-sources", "project", "auth", "status"]
     ]
 
 

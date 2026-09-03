@@ -197,7 +197,15 @@ if [[ "$PROFILE" == max_diversity ]]; then
     'import hashlib,pathlib,sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' \
     "$claude_target")"
 
-  if ! auth_json="$($claude_target auth status 2>/dev/null)"; then
+  claude_auth_arguments=(auth status)
+  if [[ "$CLAUDE_AUTH_MODE_SELECTION" == subscription ]]; then
+    # A valid Claude subscription can coexist with a user-level Vertex
+    # preference.  Ignore user settings for both this preflight and the cold
+    # verifier command so subscription mode cannot silently inherit a cloud
+    # provider while the account credential remains available normally.
+    claude_auth_arguments=(--setting-sources project auth status)
+  fi
+  if ! auth_json="$($claude_target "${claude_auth_arguments[@]}" 2>/dev/null)"; then
     echo "max_diversity Claude CLI is not authenticated." >&2
     exit 1
   fi
@@ -403,7 +411,7 @@ PY
   export VERIFY_CLAUDE_LAUNCH_MODEL="$selected_claude_launch_model"
   export VERIFY_CLAUDE_REASONING_EFFORT="${VERIFY_CLAUDE_REASONING_EFFORT:-max}"
   export VERIFY_CLAUDE_PROVIDER_MODEL="$provider_model"
-  unset auth_json auth_binding_json provider_model claude_command claude_target claude_sha256 selected_claude_model selected_claude_launch_model
+  unset auth_json auth_binding_json provider_model claude_command claude_target claude_sha256 selected_claude_model selected_claude_launch_model claude_auth_arguments
 fi
 
 command=(

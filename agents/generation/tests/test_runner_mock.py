@@ -8,6 +8,7 @@ import py_compile
 import selectors
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -6640,6 +6641,9 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
     (isolated_home / ".claude" / "projects" / "old.jsonl").write_text(
         "old claude context", encoding="utf-8"
     )
+    output_directory = generation_root / "results" / "example"
+    if output_directory.exists():
+        shutil.rmtree(output_directory)
 
     inherited_descriptors: list[int] = []
     if descriptor_bound:
@@ -6691,6 +6695,7 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
 
     assert completed.returncode == 1, completed.stdout + completed.stderr
     assert "no trusted frontier progress" in completed.stderr
+    assert output_directory.is_dir() and not output_directory.is_symlink()
     assert f"Accepted Claude root plan set: {plan_sha256}" in completed.stdout
     assert f"Claude cohort retrieval mode: {expected_mode}" in completed.stdout
     calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
@@ -6992,6 +6997,63 @@ def test_isolated_legacy_runner_works_without_hotjoin_control_sources(
         "bytes": len(expected_instructions),
         "sha256": hashlib.sha256(expected_instructions).hexdigest(),
     }
+
+
+def test_owned_legacy_runner_fd_is_snapshotted_from_any_shared_offset(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    legacy_runner = runner.with_name("run_legacy.sh").resolve()
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "RETHLAS_RUN_MODE": "core",
+            "RETHLAS_MAIN_AGENT": "gpt-sol",
+        },
+    )
+    runner_descriptor = os.open(legacy_runner, os.O_RDONLY)
+    try:
+        # /dev/fd duplicates the shared open-file description on Darwin.  The
+        # production snapshot must therefore ignore an inherited EOF offset.
+        os.lseek(runner_descriptor, 0, os.SEEK_END)
+        environment.update(
+            {
+                "RETHLAS_OWNED_EXECUTABLE_ORIGIN": str(legacy_runner),
+                "RETHLAS_OWNED_EXECUTABLE_FD": str(runner_descriptor),
+                "RETHLAS_OWNED_EXECUTABLE_SHA256": hashlib.sha256(
+                    legacy_runner.read_bytes()
+                ).hexdigest(),
+            }
+        )
+        completed = subprocess.run(
+            [str(legacy_runner)],
+            cwd=legacy_runner.parent.parent,
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+            pass_fds=(runner_descriptor,),
+        )
+    finally:
+        os.close(runner_descriptor)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "fcopyfile failed" not in completed.stderr
+    config = json.loads(
+        (legacy_runner.parent.parent / "reasoning_mcp_config_seen.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    snapshot_runner = (
+        Path(config["args"][-2]).parent.parent / "tests" / "run_legacy.sh"
+    )
+    assert snapshot_runner.read_bytes() == legacy_runner.read_bytes()
+    assert stat.S_IMODE(snapshot_runner.stat().st_mode) == (
+        stat.S_IMODE(legacy_runner.stat().st_mode) & ~0o222
+    )
 
 
 def test_legacy_verifier_unavailable_starts_zero_paid_roots(tmp_path: Path) -> None:

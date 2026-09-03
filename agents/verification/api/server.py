@@ -1375,6 +1375,10 @@ def _claude_environment() -> Dict[str, str]:
     allowed = (
         "PATH",
         "HOME",
+        # The native macOS Claude CLI uses the login name to locate its
+        # subscription credential in Keychain.  USER is non-secret and is the
+        # minimal additional binding needed for subscription cold starts.
+        "USER",
         "CLAUDE_CONFIG_DIR",
         "TMPDIR",
         "LANG",
@@ -1610,9 +1614,13 @@ def _claude_auth_binding_matches(
 def _require_claude_auth(
     executable: Path, *, backend: VerifierBackend, environment: Mapping[str, str]
 ) -> None:
+    command = [str(executable)]
+    if VERIFY_CLAUDE_AUTH_MODE == "subscription":
+        command.extend(["--setting-sources", "project"])
+    command.extend(["auth", "status"])
     try:
         completed = subprocess.run(
-            [str(executable), "auth", "status"],
+            command,
             cwd=str(WORK_DIR),
             env=dict(environment),
             stdin=subprocess.DEVNULL,
@@ -1751,8 +1759,10 @@ def build_claude_command(
         sort_keys=True,
         separators=(",", ":"),
     )
-    return [
-        str(executable),
+    command = [str(executable)]
+    if VERIFY_CLAUDE_AUTH_MODE == "subscription":
+        command.extend(["--setting-sources", "project"])
+    command.extend([
         "--safe-mode",
         "--print",
         "--output-format",
@@ -1786,7 +1796,8 @@ def build_claude_command(
             "ids. The raw JSON object must satisfy this exact JSON Schema: "
             + schema_json
         ),
-    ]
+    ])
+    return command
 
 
 def _scan_claude_event_stream(
