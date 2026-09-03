@@ -1440,6 +1440,10 @@ def _claude_environment() -> Dict[str, str]:
     environment["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
         CLAUDE_CODE_MAX_OUTPUT_TOKENS
     )
+    # The CLI flag alone does not suppress this auxiliary model call in every
+    # subscription build.  Bind the documented environment setting as well so
+    # modelUsage contains only the verifier selected by the profile.
+    environment["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] = "false"
     return environment
 
 
@@ -1763,6 +1767,12 @@ def build_claude_command(
     if VERIFY_CLAUDE_AUTH_MODE == "subscription":
         command.extend(["--setting-sources", "project"])
     command.extend([
+        # A fixed name prevents Claude Code's subscription client from making
+        # a separate Haiku request to synthesize a session title.  Keep the
+        # verifier execution genuinely single-model instead of weakening the
+        # provenance check for that auxiliary request.
+        "--name",
+        "axiom-relay-proof-verifier",
         "--safe-mode",
         # Subscription sessions otherwise make a separate Haiku request to
         # predict a next prompt.  That request is unrelated to verification

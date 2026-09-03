@@ -3656,6 +3656,9 @@ def test_cold_claude_verifier_is_toolless_ephemeral_and_contract_bound(
     assert arguments[arguments.index("--tools") + 1] == ""
     assert "--no-session-persistence" in arguments
     assert "--fallback-model" not in arguments
+    assert arguments[arguments.index("--name") + 1] == (
+        "axiom-relay-proof-verifier"
+    )
     assert arguments[arguments.index("--prompt-suggestions") + 1] == "false"
     system_prompt = arguments[arguments.index("--system-prompt") + 1]
     assert "exactly one raw JSON object" in system_prompt
@@ -3724,6 +3727,7 @@ def test_claude_environment_forwards_owned_liveness_controls_by_default(
     assert environment["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == str(
         server.CLAUDE_CODE_MAX_OUTPUT_TOKENS
     )
+    assert environment["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] == "false"
     assert "MAX_STRUCTURED_OUTPUT_RETRIES" not in environment
 
 
