@@ -780,13 +780,13 @@ def test_fresh_reviewer_invocation_binds_model_effort_snapshot_and_no_capabiliti
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=bound,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
     invocation = critic.build_invocation(request)
 
-    assert invocation.model == "gpt-5.6-sol"
+    assert invocation.model == "gpt-6-astra"
     assert invocation.reasoning_effort == "max"
     assert invocation.snapshot_sha256 == contracts.snapshot_sha256(bound)
     assert invocation.fresh_session is True
@@ -828,7 +828,7 @@ def test_reviewer_treats_in_snapshot_directives_as_untrusted_data() -> None:
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=bound,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
@@ -853,7 +853,7 @@ def test_execution_unknown_is_terminal_and_launcher_is_never_retried() -> None:
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=snapshot(),
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
@@ -880,7 +880,7 @@ def test_missing_host_callback_is_operationally_blocked_without_self_spawn() -> 
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=snapshot(),
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
@@ -898,7 +898,7 @@ def test_contract_cli_executes_by_exact_path_under_python_isolated_mode(
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=snapshot(),
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
@@ -931,7 +931,7 @@ def test_contract_cli_normalizes_only_the_fresh_reviewer_wire(
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=bound,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="high",
         policy_sha256=POLICY_SHA,
     )
@@ -986,7 +986,7 @@ def test_malformed_reviewer_output_is_operational_not_red() -> None:
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=snapshot(),
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
@@ -1009,7 +1009,7 @@ def test_reviewer_boundary_canonicalizes_yellow_milestone_to_fatal_doubt() -> No
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=bound,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="high",
         policy_sha256=POLICY_SHA,
     )
@@ -1051,7 +1051,7 @@ def test_reviewer_boundary_projects_evidence_to_bound_snapshot() -> None:
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=bound,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="high",
         policy_sha256=POLICY_SHA,
     )
@@ -1102,7 +1102,7 @@ def test_reviewer_boundary_derives_immutable_bindings_from_request() -> None:
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=bound,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="high",
         policy_sha256=POLICY_SHA,
     )

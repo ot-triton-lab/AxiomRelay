@@ -284,8 +284,8 @@ def targeted_payload(proof: str) -> tuple[dict[str, Any], dict[str, Any]]:
             "backend": {
                 "adapter": "codex_cli",
                 "provider": "openai",
-                "model": "gpt-5.6-sol",
-                "launch_model": "gpt-5.6-sol",
+                "model": "gpt-6-astra",
+                "launch_model": "gpt-6-astra",
                 "reasoning_effort": "max",
             },
             "prompt_limits": {
@@ -458,7 +458,7 @@ def install_post(
                 {
                     "verification_attempt_id": attempt_id,
                     "verifier_run_id": "testrun:" + attempt_id,
-                    "verifier_model": "gpt-5.6-sol",
+                    "verifier_model": "gpt-6-astra",
                     "verifier_reasoning_effort": "max",
                     "verifier_service_version": "test-0.3.0",
                     "verification_pass_index": json["verification_pass_index"],
@@ -491,8 +491,8 @@ def install_post(
                         "pass_index": index,
                         "adapter": "codex_cli",
                         "provider": "openai",
-                        "model": "gpt-5.6-sol",
-                        "launch_model": "gpt-5.6-sol",
+                        "model": "gpt-6-astra",
+                        "launch_model": "gpt-6-astra",
                         "reasoning_effort": "max",
                         "session_mode": "cold",
                     }
@@ -1993,8 +1993,8 @@ def test_dispatched_admission_rejects_changed_verifier_effect_identity(
                         "pass_index": index,
                         "adapter": "codex_cli",
                         "provider": "openai",
-                        "model": "gpt-5.6-sol",
-                        "launch_model": "gpt-5.6-sol",
+                        "model": "gpt-6-astra",
+                        "launch_model": "gpt-6-astra",
                         "reasoning_effort": "max",
                         "session_mode": "cold",
                     }
@@ -2124,8 +2124,8 @@ def test_cross_layer_recovery_retires_only_old_publication_generation(
                 "pass_index": index,
                 "adapter": "codex_cli",
                 "provider": "openai",
-                "model": "gpt-5.6-sol",
-                "launch_model": "gpt-5.6-sol",
+                "model": "gpt-6-astra",
+                "launch_model": "gpt-6-astra",
                 "reasoning_effort": "max",
                 "session_mode": "cold",
             }
@@ -2154,7 +2154,7 @@ def test_cross_layer_recovery_retires_only_old_publication_generation(
             {
                 "verification_attempt_id": json["verification_attempt_id"],
                 "verifier_run_id": "testrun:" + json["verification_attempt_id"],
-                "verifier_model": "gpt-5.6-sol",
+                "verifier_model": "gpt-6-astra",
                 "verifier_reasoning_effort": "max",
                 "verifier_service_version": "0.5.2",
                 "verification_pass_index": json["verification_pass_index"],
@@ -6453,7 +6453,7 @@ def test_identical_proof_reentry_keeps_pass_identities_stable_across_http_500(
             {
                 "verification_attempt_id": json["verification_attempt_id"],
                 "verifier_run_id": "run:" + json["verification_attempt_id"],
-                "verifier_model": "gpt-5.6-sol",
+                "verifier_model": "gpt-6-astra",
                 "verifier_reasoning_effort": "max",
                 "verifier_service_version": "test-0.3.0",
                 "verification_pass_index": json["verification_pass_index"],
@@ -6548,7 +6548,7 @@ def test_publication_rejects_two_receipts_from_one_verifier_run(
             {
                 "verification_attempt_id": json["verification_attempt_id"],
                 "verifier_run_id": "reused-verifier-run",
-                "verifier_model": "gpt-5.6-sol",
+                "verifier_model": "gpt-6-astra",
                 "verifier_reasoning_effort": "max",
                 "verifier_service_version": "test-0.3.0",
                 "verification_pass_index": json["verification_pass_index"],
@@ -6623,7 +6623,7 @@ def test_publication_records_distinct_codex_and_claude_verifier_models(
                 "verification_attempt_id": json["verification_attempt_id"],
                 "verifier_run_id": f"diverse-verifier-run-{pass_index}",
                 "verifier_model": (
-                    "gpt-5.6-sol" if pass_index == 1 else "claude-opus-5"
+                    "gpt-6-astra" if pass_index == 1 else "claude-opus-5"
                 ),
                 "verifier_reasoning_effort": "max",
                 "verifier_service_version": "test-0.4.0",
@@ -6653,8 +6653,8 @@ def test_publication_records_distinct_codex_and_claude_verifier_models(
                         "pass_index": 1,
                         "adapter": "codex_cli",
                         "provider": "openai",
-                        "model": "gpt-5.6-sol",
-                        "launch_model": "gpt-5.6-sol",
+                        "model": "gpt-6-astra",
+                        "launch_model": "gpt-6-astra",
                         "reasoning_effort": "max",
                         "session_mode": "cold",
                     },
@@ -6689,7 +6689,7 @@ def test_publication_records_distinct_codex_and_claude_verifier_models(
     assert [
         verification_pass["verifier_model"]
         for verification_pass in receipt["verification_passes"]
-    ] == ["gpt-5.6-sol", "claude-opus-5"]
+    ] == ["gpt-6-astra", "claude-opus-5"]
     assert [
         verification_pass["verifier_reasoning_effort"]
         for verification_pass in receipt["verification_passes"]

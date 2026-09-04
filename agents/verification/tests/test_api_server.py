@@ -3026,6 +3026,35 @@ def test_prompt_delimiter_cannot_be_closed_by_proof_text() -> None:
     assert "return needs_context" in prompt
 
 
+@pytest.mark.parametrize(
+    ("model", "launch_model"),
+    [("gpt-5.6-sol", None), ("gpt-6-astra", "gpt-5.6-sol")],
+)
+def test_retired_sol_backend_remains_parseable_but_cannot_dispatch(
+    model: str, launch_model: str | None,
+) -> None:
+    backend = server.VerifierBackend(
+        adapter="codex_cli",
+        provider="openai",
+        model=model,
+        launch_model=launch_model,
+        reasoning_effort="xhigh",
+    )
+    assert server._validate_backend(backend, label="historical") == backend
+    with pytest.raises(RuntimeError, match="historical only"):
+        server.build_codex_command("Synthetic proof", backend=backend)
+
+
+@pytest.mark.parametrize("variable", ["VERIFY_PRIMARY_MODEL", "VERIFY_ADVERSARIAL_MODEL"])
+def test_configured_verifier_rejects_retired_sol_override(
+    monkeypatch: pytest.MonkeyPatch, variable: str,
+) -> None:
+    monkeypatch.setattr(server, "VERIFIER_PROFILE", "compatible")
+    monkeypatch.setenv(variable, "gpt-5.6-sol")
+    with pytest.raises(RuntimeError, match="historical only"):
+        server._configured_verifier_backends()
+
+
 def test_codex_command_uses_read_only_ephemeral_sandbox() -> None:
     work_dir = Path("/isolated/workspace")
     output_path = work_dir / "results" / "run" / "verification.json"
@@ -3133,10 +3162,10 @@ def test_verifier_defaults_to_sol_xhigh_and_preserves_environment_overrides() ->
     config = tomllib.loads(
         (VERIFICATION_ROOT / ".codex" / "config.toml").read_text(encoding="utf-8")
     )
-    assert config["model"] == "gpt-5.6-sol"
+    assert config["model"] == "gpt-6-astra"
     assert config["model_reasoning_effort"] == "xhigh"
     assert _isolated_verifier_model_settings() == {
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
         "effort": "xhigh",
     }
     assert _isolated_verifier_model_settings(
@@ -3155,8 +3184,8 @@ def test_verifier_defaults_to_sol_xhigh_and_preserves_environment_overrides() ->
             {
                 "adapter": "codex_cli",
                 "provider": "openai",
-                "model": "gpt-5.6-sol",
-                "launch_model": "gpt-5.6-sol",
+                "model": "gpt-6-astra",
+                "launch_model": "gpt-6-astra",
                 "effort": "xhigh",
             },
         ),
@@ -3202,8 +3231,8 @@ def test_verifier_profiles_resolve_exact_backends(
     assert backends["1"] == {
         "adapter": "codex_cli",
         "provider": "openai",
-        "model": "gpt-6-astra" if profile == "max_diversity" else "gpt-5.6-sol",
-        "launch_model": "gpt-6-astra" if profile == "max_diversity" else "gpt-5.6-sol",
+        "model": "gpt-6-astra" if profile == "max_diversity" else "gpt-6-astra",
+        "launch_model": "gpt-6-astra" if profile == "max_diversity" else "gpt-6-astra",
         "effort": "max" if profile == "max_diversity" else "xhigh",
     }
     assert backends["2"] == expected_adversarial
@@ -4341,7 +4370,7 @@ def test_adversarial_pass_routes_to_cold_claude_backend(
         1: server.VerifierBackend(
             adapter="codex_cli",
             provider="openai",
-            model="gpt-5.6-sol",
+            model="gpt-6-astra",
             reasoning_effort="max",
         ),
         2: server.VerifierBackend(
@@ -4394,7 +4423,7 @@ def test_profile_endpoint_exposes_exact_nonfallback_backends(
         1: server.VerifierBackend(
             adapter="codex_cli",
             provider="openai",
-            model="gpt-5.6-sol",
+            model="gpt-6-astra",
             reasoning_effort="max",
         ),
         2: server.VerifierBackend(
@@ -4417,8 +4446,8 @@ def test_profile_endpoint_exposes_exact_nonfallback_backends(
                 "pass_index": 1,
                 "adapter": "codex_cli",
                 "provider": "openai",
-                "model": "gpt-5.6-sol",
-                "launch_model": "gpt-5.6-sol",
+                "model": "gpt-6-astra",
+                "launch_model": "gpt-6-astra",
                 "reasoning_effort": "max",
                 "session_mode": "cold",
             },
@@ -4771,7 +4800,7 @@ def test_http_500_reentry_reuses_sol_pass_and_resumes_opus_at_first_unsettled_it
         1: server.VerifierBackend(
             adapter="codex_cli",
             provider="openai",
-            model="gpt-5.6-sol",
+            model="gpt-6-astra",
             reasoning_effort="max",
         ),
         2: server.VerifierBackend(
@@ -4828,7 +4857,7 @@ def test_http_500_reentry_reuses_sol_pass_and_resumes_opus_at_first_unsettled_it
         proof, pass_index=1, caller_instance_id=caller_b
     )
     assert reconciled_sol == sol
-    assert len(calls[1]) == 9, "the already-correct Sol 9/9 pass must not replay"
+    assert len(calls[1]) == 9, "the already-correct Astra 9/9 pass must not replay"
 
     with pytest.raises(HTTPException) as second_failure:
         _invoke_recoverable_pass(

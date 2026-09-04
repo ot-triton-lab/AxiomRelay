@@ -26,7 +26,7 @@ AxiomRelay addresses those failure modes with a small set of invariants:
 
 - route design and proof execution are separate roles;
 - at most three isolated proof lanes run from one host-validated plan set;
-- an optional Opus + Sol council performs independent route design, one joint
+- an optional Opus + Astra council performs independent route design, one joint
   revision, and one read-only risk audit;
 - complete user-supplied answers enter as SHA-bound **unverified reference
   candidates**, while late GPT Pro help enters as a narrowly bound
@@ -67,7 +67,7 @@ untrusted gap delta -> local audit -> repair only the dependency cone
 
 GPT Pro is therefore used as a low-frequency **gap oracle**, not as proof
 authority and not merely as another whole-proof generator. The root manages
-state and chooses the next bottleneck; isolated Sol lanes supply search
+state and chooses the next bottleneck; isolated Astra lanes supply search
 diversity; Pro may propose a decisive local argument or counterexample; and
 the verifier still checks the final proof in full. A failed Pro answer does not
 erase earlier work, while an accepted local step advances the frontier for the
@@ -89,11 +89,11 @@ problem statement --------------------+
 optional GPT Pro / human answer ------+ ingest as unverified, SHA-bound input
                                       v
                          route-design root
-              GPT Sol | Opus | Fable | Opus + Sol council
+              GPT Astra | Opus | Fable | Opus + Astra council
                                       |
                           one accepted three-route slate
                                       v
-                       three isolated GPT Sol lanes
+                       three isolated GPT Astra lanes
                             |         |         |
                             +---------+---------+
                                       v
@@ -168,8 +168,8 @@ A route report, synthesis, draft, single verifier pass, or unreceipted
 
 | Mode | Use | Root choices | Cost profile |
 |---|---|---|---|
-| `core` | Default isolated runtime | GPT Sol, Opus, Fable, Opus + Sol council | Lower overhead |
-| `reviewed` | Long-running compatibility workflow with scheduled reviews | GPT Sol | Higher overhead |
+| `core` | Default isolated runtime | GPT Astra, Opus, Fable, Opus + Astra council | Lower overhead |
+| `reviewed` | Long-running compatibility workflow with scheduled reviews | GPT Astra | Higher overhead |
 
 Noninteractive runs default to `core`. Interactive runs explain the choices.
 The reviewed mode requires an explicit run ID.
@@ -178,10 +178,10 @@ The reviewed mode requires an explicit run ID.
 
 | Root | Role |
 |---|---|
-| `gpt-sol` | GPT Sol designs routes and orchestrates proof work. Default. |
+| `gpt-astra` | GPT Astra designs routes and orchestrates proof work. Default. |
 | `opus` | Persistent logical Claude Opus 5 root; each launch performs one resumable turn. |
 | `fable` | Persistent Claude Fable 5 root with the same host controls. |
-| `opus-sol-council` | Opus and an isolated Sol/max seat design independently, revise once together, then run a final non-editing audit. |
+| `opus-astra-council` | Opus and an isolated Astra/max seat design independently, revise once together, then run a final non-editing audit. |
 
 Claude roots are currently available in `core` mode only. They receive a
 read-only workspace view plus a narrow host interface; they do not receive
@@ -195,28 +195,39 @@ Each root session has at most 12 write-once experiments, with 32 KiB of code,
 64 KiB of stdout, and 16 KiB of stderr per experiment. NumPy, SciPy, SymPy,
 mpmath, and gmpy2 come from the attested generation environment. The private
 receipt is `unverified_computational_diagnostic`; it can discriminate routes
-but cannot prove a claim or authorize a cohort. The isolated Sol council seat
-still has no shell or Python, while admitted GPT-Sol proof lanes retain their
+but cannot prove a claim or authorize a cohort. The isolated Astra council seat
+still has no shell or Python, while admitted GPT-Astra proof lanes retain their
 existing restricted math runtime.
 
 ### Model-policy profiles
 
 | Profile | Proof lanes | Verifier 1 | Verifier 2 |
 |---|---|---|---|
-| `compatible` | Sol `max` | Sol `xhigh` | Sol `xhigh` |
-| `balanced` | Sol `max` | Sol `xhigh` | Terra `max` |
-| `economy` | Terra `max` | Sol `xhigh` | Terra `max` |
+| `compatible` | Astra `max` | Astra `xhigh` | Astra `xhigh` |
+| `balanced` | Astra `max` | Astra `xhigh` | Terra `max` |
+| `economy` | Terra `max` | Astra `xhigh` | Terra `max` |
 | `max_diversity` | GPT-6 Astra `max` | GPT-6 Astra `max` | Opus 5 1M `max` |
 
 `max_diversity` requires authenticated OpenAI and Claude providers. Pass 2 is
 cold: it receives the authenticated proof context but not Pass 1's verdict,
 findings, or session state.
 
-For this profile, the OpenAI council seats also use `gpt-6-astra` at `max`.
-The `gpt-sol` and `opus-sol-council` entrypoint names remain compatible.
-Existing sessions keep their source/model bindings and require the normal
-source-drift takeover procedure after an upgrade. Astra has not yet had a
-paid end-to-end canary in this checkout.
+All roles previously dispatched to Sol now use `gpt-6-astra`, preserving their
+`max` or `xhigh` effort. Terra and Opus roles retain the profile choices above.
+Use `gpt-astra` and `opus-astra-council`; the legacy `gpt-sol` and
+`opus-sol-council` command selectors remain accepted aliases. Explicit Sol
+model overrides are rejected before a new dispatch.
+
+Existing sessions keep their original source/model bindings and require the
+normal source-drift takeover procedure after an upgrade. Historical Sol
+intents and receipts are authenticated against their original dispatch chain
+and retained byte-for-byte; they do not authorize a new Sol call. Stable
+transport identifiers such as `opus_sol_council_v2` are unchanged. Astra has
+not yet had a paid end-to-end canary in this checkout.
+
+Restart the verifier on the new release before starting generation. Every
+launch mode checks its advertised profile and rejects a ready service that
+still selects Sol; health alone does not establish model compatibility.
 
 ## Quick start
 
@@ -325,22 +336,22 @@ and answer files in that directory are intentionally ignored by Git. A nested
 input such as `data/algebra/problem.md` produces output below
 `results/algebra/problem/`.
 
-Default GPT Sol root:
+Default GPT Astra root:
 
 ```bash
 cd agents/generation
 AXIOM_RELAY_RUN_MODE=core \
-AXIOM_RELAY_MAIN_AGENT=gpt-sol \
+AXIOM_RELAY_MAIN_AGENT=gpt-astra \
 PROBLEM_FILE=data/my_problem.md \
 ./tests/run_example.sh
 ```
 
-Opus + Sol council with maximum diversity:
+Opus + Astra council with maximum diversity:
 
 ```bash
 cd agents/generation
 AXIOM_RELAY_RUN_MODE=core \
-AXIOM_RELAY_MAIN_AGENT=opus-sol-council \
+AXIOM_RELAY_MAIN_AGENT=opus-astra-council \
 AXIOM_RELAY_MODEL_POLICY_PROFILE=max_diversity \
 PROBLEM_FILE=data/my_problem.md \
 ./tests/run_example.sh
@@ -349,7 +360,7 @@ PROBLEM_FILE=data/my_problem.md \
 Run `./tests/run_example.sh` in a terminal without settings to enter the
 problem path and use the interactive execution selector. In noninteractive
 use, `PROBLEM_FILE` is required; there is no bundled example problem fallback.
-When no interpreter override is supplied, GPT-Sol and reviewed mode use the
+When no interpreter override is supplied, GPT-Astra and reviewed mode use the
 documented `agents/.generation-venv/bin/python` environment automatically.
 
 ## Asking GPT Pro about one blocked proof gap
@@ -361,7 +372,7 @@ the same load-bearing claim, the canonical Claude root emits a write-once
 the current statement, cited active memory records, and ledger head. It does
 not wait for all three routes to fail merely to ask a precise question.
 Preparing the packet never opens ChatGPT or spends a Pro turn; the owner
-remains the only sender. Reviewed/GPT-Sol lanes do not have these four root
+remains the only sender. Reviewed/GPT-Astra lanes do not have these four root
 tools: they hand the precise gap evidence back to the canonical root.
 
 The copied prompt is self-contained. It assumes that Pro cannot access the
@@ -474,12 +485,12 @@ agents/.generation-venv/bin/python -I -B agents/claude_core.py \
   "$PROBLEM_ID" "$STATEMENT_SHA256" gpt_pro < pro-answer.md
 ```
 
-Then start a new Opus + Sol council for that statement. The candidate moves
+Then start a new Opus + Astra council for that statement. The candidate moves
 through the system as follows:
 
 1. The host stores immutable bytes bound to the problem and statement digest.
 2. Opus must bind the candidate marker and exact projection path to one route.
-3. Sol's initial blind slate remains independent of the candidate.
+3. Astra's initial blind slate remains independent of the candidate.
 4. The joint revision and final audit receive the complete candidate and must
    test it or identify a fatal defect.
 5. The bound proof lane receives the exact read-only projection.
@@ -524,7 +535,7 @@ new root without either binding still rejects this setting.
 | Setting | Meaning |
 |---|---|
 | `AXIOM_RELAY_RUN_MODE` | `core`, `reviewed`, or `prompt` |
-| `AXIOM_RELAY_MAIN_AGENT` | `gpt-sol`, `opus`, `fable`, `opus-sol-council`, or `prompt` |
+| `AXIOM_RELAY_MAIN_AGENT` | `gpt-astra`, `opus`, `fable`, `opus-astra-council`, or `prompt` |
 | `AXIOM_RELAY_MODEL_POLICY_PROFILE` | `compatible`, `balanced`, `economy`, or `max_diversity` |
 | `AXIOM_RELAY_REVIEW_RUN_ID` | Required identity for reviewed mode |
 | `AXIOM_RELAY_CLAUDE_SESSION_ID` | Resume an active logical Claude root |

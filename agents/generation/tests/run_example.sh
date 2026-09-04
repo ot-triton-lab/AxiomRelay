@@ -141,7 +141,7 @@ print_main_agent_menu() {
   cat >&2 <<'EOF'
 Choose the route-design main agent:
 
-  1) GPT Sol
+  1) GPT Astra
      Current production path. The Codex root performs protected route design,
      canonical memory, exact three-lane fanout, and proof execution.
 
@@ -149,19 +149,19 @@ Choose the route-design main agent:
      Persistent logical Claude Code root using claude-opus-5 at max effort.
      Each explicit launch runs one headless turn and exits while preserving the
      same session id for a later resume.
-     AxiomRelay admits exact-three GPT Sol cohorts; Claude owns route design,
+     AxiomRelay admits exact-three GPT Astra cohorts; Claude owns route design,
      canonical memory, synthesis, and operator interaction.
 
   3) Fable
      The same persistent Claude-root architecture using claude-fable-5.
 
-  4) Opus + Sol council
-     Max-diversity route design. Opus 5 and an isolated GPT Sol/max seat first
+  4) Opus + Astra council
+     Max-diversity route design. Opus 5 and an isolated GPT Astra/max seat first
      produce independent route slates, then complete one joint revision and a
      final risk audit before the host freezes exactly three proof lanes.
 
 Claude-root choices are currently available only in core mode. They do not use
-Claude subagents; the host starts exactly three GPT Sol proof lanes.
+Claude subagents; the host starts exactly three GPT Astra proof lanes.
 EOF
 }
 
@@ -175,8 +175,8 @@ prompt_main_agent() {
       exit 1
     fi
     case "$selection" in
-      1|gpt-sol|sol|codex)
-        AXIOM_RELAY_MAIN_AGENT="gpt-sol"
+      1|gpt-astra|astra|gpt-sol|sol|codex)
+        AXIOM_RELAY_MAIN_AGENT="gpt-astra"
         return
         ;;
       2|opus)
@@ -187,8 +187,8 @@ prompt_main_agent() {
         AXIOM_RELAY_MAIN_AGENT="fable"
         return
         ;;
-      4|opus-sol-council|council|dual-council)
-        AXIOM_RELAY_MAIN_AGENT="opus-sol-council"
+      4|opus-astra-council|opus-sol-council|council|dual-council)
+        AXIOM_RELAY_MAIN_AGENT="opus-astra-council"
         return
         ;;
       *)
@@ -232,29 +232,29 @@ case "$AXIOM_RELAY_MAIN_AGENT" in
     if [[ -t 0 && -t 2 ]] || [[ "$RUN_MODE_WAS_PROMPTED" == 1 ]]; then
       prompt_main_agent
     else
-      AXIOM_RELAY_MAIN_AGENT="gpt-sol"
+      AXIOM_RELAY_MAIN_AGENT="gpt-astra"
     fi
     ;;
   prompt)
     prompt_main_agent
     ;;
-  gpt-sol|sol|codex)
-    AXIOM_RELAY_MAIN_AGENT="gpt-sol"
+  gpt-astra|astra|gpt-sol|sol|codex)
+    AXIOM_RELAY_MAIN_AGENT="gpt-astra"
     ;;
   opus|fable) ;;
-  opus-sol-council|council|dual-council)
-    AXIOM_RELAY_MAIN_AGENT="opus-sol-council"
+  opus-astra-council|opus-sol-council|council|dual-council)
+    AXIOM_RELAY_MAIN_AGENT="opus-astra-council"
     ;;
   *)
-    echo "AXIOM_RELAY_MAIN_AGENT must be gpt-sol, opus, fable, opus-sol-council, or prompt." >&2
+    echo "AXIOM_RELAY_MAIN_AGENT must be gpt-astra, opus, fable, opus-astra-council, or prompt." >&2
     exit 1
     ;;
 esac
 
-if [[ "$AXIOM_RELAY_MAIN_AGENT" == opus-sol-council ]]; then
+if [[ "$AXIOM_RELAY_MAIN_AGENT" == opus-astra-council ]]; then
   if [[ "$MODEL_POLICY_PROFILE_WAS_EXPLICIT" == 1 \
      && "$AXIOM_RELAY_MODEL_POLICY_PROFILE" != max_diversity ]]; then
-    echo "AXIOM_RELAY_MAIN_AGENT=opus-sol-council requires AXIOM_RELAY_MODEL_POLICY_PROFILE=max_diversity." >&2
+    echo "AXIOM_RELAY_MAIN_AGENT=opus-astra-council requires AXIOM_RELAY_MODEL_POLICY_PROFILE=max_diversity." >&2
     exit 1
   fi
   AXIOM_RELAY_MODEL_POLICY_PROFILE="max_diversity"
@@ -268,8 +268,8 @@ case "$AXIOM_RELAY_MODEL_POLICY_PROFILE" in
     ;;
 esac
 
-if [[ "$AXIOM_RELAY_RUN_MODE" == reviewed && "$AXIOM_RELAY_MAIN_AGENT" != gpt-sol ]]; then
-  echo "Claude-root main agents are not yet admitted to reviewed mode; use core or select gpt-sol." >&2
+if [[ "$AXIOM_RELAY_RUN_MODE" == reviewed && "$AXIOM_RELAY_MAIN_AGENT" != gpt-astra ]]; then
+  echo "Claude-root main agents are not yet admitted to reviewed mode; use core or select gpt-astra." >&2
   exit 1
 fi
 if [[ "$AXIOM_RELAY_RUN_MODE" == reviewed \
@@ -318,7 +318,7 @@ if [[ "$AXIOM_RELAY_RUN_MODE" == core ]]; then
   [[ -v AXIOM_RELAY_CLAUDE_OWNER_PROMPT ]] && export RETHLAS_CLAUDE_ROOT_OWNER_PROMPT="$AXIOM_RELAY_CLAUDE_OWNER_PROMPT"
   [[ -v AXIOM_RELAY_CLAUDE_CONTEXT_WINDOW ]] && export RETHLAS_CLAUDE_CONTEXT_WINDOW="$AXIOM_RELAY_CLAUDE_CONTEXT_WINDOW"
   unset RETHLAS_HOTJOIN_RUN_ID
-  if [[ "$AXIOM_RELAY_MAIN_AGENT" == gpt-sol ]]; then
+  if [[ "$AXIOM_RELAY_MAIN_AGENT" == gpt-astra ]]; then
     if [[ ! -f "$LEGACY_RUNNER" || -L "$LEGACY_RUNNER" || ! -x "$LEGACY_RUNNER" ]]; then
       echo "Isolated legacy runner is unavailable: $LEGACY_RUNNER" >&2
       exit 1

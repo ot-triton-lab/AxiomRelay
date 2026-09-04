@@ -20,7 +20,7 @@ AxiomRelay 为这些问题加了几条硬约束：
 
 - 设计路线和实际写证明由不同角色完成。
 - Host 检查计划后，最多放行三条相互隔离的证明分支（lane）。
-- 可选的 Opus + Sol council 会先各自设计路线，随后共同修订一次，最后只读审查风险。
+- 可选的 Opus + Astra council 会先各自设计路线，随后共同修订一次，最后只读审查风险。
 - 用户提供的完整外部答案以 SHA 绑定的**未验证参考候选**保存。
 - 后期从 GPT Pro 获得的局部帮助以**未验证 gap delta**保存，只绑定到指定缺口。
 - 持久化意图（durable intent）和回执（receipt）用于恢复中断任务，避免重复同一次付费调用。
@@ -56,7 +56,7 @@ owner 把这个具体问题交给 GPT Pro（可选，带 SHA 绑定）
 GPT Pro 只在少数关键 gap 上提供建议，相当于一个低频调用的 **gap oracle**（缺口顾问）。它的输出仍是参考，不带证明权威。其余角色各管一段：
 
 - root 保存当前状态，决定下一步处理哪个瓶颈。
-- 相互隔离的 Sol lanes 负责尝试不同方向。
+- 相互隔离的 Astra lanes 负责尝试不同方向。
 - Pro 可以给出关键的局部论证或反例，但内容仍需审计。
 - verifier 最后检查的是完整证明。
 
@@ -72,11 +72,11 @@ Pro 的回答即使不成立，也不会抹掉此前的进度。若其中某一�
 可选 GPT Pro / 人工完整答案 -----------+ 作为未验证、SHA 绑定的输入保存
                                         v
                                   路线设计 root
-                 GPT Sol | Opus | Fable | Opus + Sol council
+                 GPT Astra | Opus | Fable | Opus + Astra council
                                         |
                                一份获准执行的三路线计划
                                         v
-                            三条隔离的 GPT Sol 证明 lane
+                            三条隔离的 GPT Astra 证明 lane
                               |         |         |
                               +---------+---------+
                                         v
@@ -139,8 +139,8 @@ cohort、source state、没有未完成的 owner/Pro wait，并完成 lease/fenc
 
 | 模式 | 适用场景 | 可选 root | 调用成本 |
 |---|---|---|---|
-| `core` | 默认隔离运行时 | GPT Sol、Opus、Fable、Opus + Sol council | 较低开销 |
-| `reviewed` | 保留定时 review 的长期兼容流程 | GPT Sol | 较高开销 |
+| `core` | 默认隔离运行时 | GPT Astra、Opus、Fable、Opus + Astra council | 较低开销 |
+| `reviewed` | 保留定时 review 的长期兼容流程 | GPT Astra | 较高开销 |
 
 非交互运行默认选择 `core`。交互运行会列出各选项并给出说明。使用 `reviewed` 时必须显式提供 run ID。
 
@@ -148,30 +148,38 @@ cohort、source state、没有未完成的 owner/Pro wait，并完成 lease/fenc
 
 | Root | 角色 |
 |---|---|
-| `gpt-sol` | 默认选项。由 GPT Sol 设计路线并编排证明工作。 |
+| `gpt-astra` | 默认选项。由 GPT Astra 设计路线并编排证明工作。 |
 | `opus` | 逻辑身份可持续的 Claude Opus 5 root。每次启动推进一个可恢复的 turn。 |
 | `fable` | 逻辑身份可持续的 Claude Fable 5 root，受与 `opus` 相同的 host 管控。 |
-| `opus-sol-council` | Opus 和隔离的 Sol/max seat 分别设计路线，共同修订一次，最后做只读审计。 |
+| `opus-astra-council` | Opus 和隔离的 Astra/max seat 分别设计路线，共同修订一次，最后做只读审计。 |
 
 Claude root 目前只能用于 `core` 模式。它只能查看只读 workspace，并通过少量 host 接口执行规定动作。通用 shell、文件写入、浏览器和 subagent 权限均未开放。
 
-在冻结 route slate 之前，Claude root 可以通过 `run_math_experiment` 运行一个明确的符号、数值或有限计算测试。这不是通用 shell：host 只在空的 Codex sandbox 中执行 inline Python，禁止读取仓库和用户 home，关闭网络，并把单次时间限制为 60 秒。每个 root session 最多有 12 个 write-once experiments；单次代码、stdout 和 stderr 上限分别为 32 KiB、64 KiB 和 16 KiB。NumPy、SciPy、SymPy、mpmath 与 gmpy2 来自经过认证的 generation 环境。私有 receipt 的类别是 `unverified_computational_diagnostic`，只能用于区分路线，不能证明命题或授权 cohort。隔离的 Sol council seat 仍然没有 shell 或 Python；正式 admitted 的 GPT-Sol proof lanes 继续使用原有的受限数学运行时。
+在冻结 route slate 之前，Claude root 可以通过 `run_math_experiment` 运行一个明确的符号、数值或有限计算测试。这不是通用 shell：host 只在空的 Codex sandbox 中执行 inline Python，禁止读取仓库和用户 home，关闭网络，并把单次时间限制为 60 秒。每个 root session 最多有 12 个 write-once experiments；单次代码、stdout 和 stderr 上限分别为 32 KiB、64 KiB 和 16 KiB。NumPy、SciPy、SymPy、mpmath 与 gmpy2 来自经过认证的 generation 环境。私有 receipt 的类别是 `unverified_computational_diagnostic`，只能用于区分路线，不能证明命题或授权 cohort。隔离的 Astra council seat 仍然没有 shell 或 Python；正式 admitted 的 GPT-Astra proof lanes 继续使用原有的受限数学运行时。
 
 ### 模型策略配置
 
 | Profile | 证明 lanes | Verifier 1 | Verifier 2 |
 |---|---|---|---|
-| `compatible` | Sol `max` | Sol `xhigh` | Sol `xhigh` |
-| `balanced` | Sol `max` | Sol `xhigh` | Terra `max` |
-| `economy` | Terra `max` | Sol `xhigh` | Terra `max` |
+| `compatible` | Astra `max` | Astra `xhigh` | Astra `xhigh` |
+| `balanced` | Astra `max` | Astra `xhigh` | Terra `max` |
+| `economy` | Terra `max` | Astra `xhigh` | Terra `max` |
 | `max_diversity` | GPT-6 Astra `max` | GPT-6 Astra `max` | Opus 5 1M `max` |
 
 `max_diversity` 要求 OpenAI 和 Claude 两个 provider 都已完成认证。Pass 2 会冷启动，只接收经过认证的证明上下文，不会看到 Pass 1 的判定、findings 或 session state。
 
-该配置下 council 的 OpenAI 席位也使用 `gpt-6-astra`、推理强度 `max`。
-`gpt-sol` 和 `opus-sol-council` 入口名称保持兼容。已有 session 保留原有的
-源码及模型绑定，升级后需要走现有的 source-drift 接管流程；本次尚未执行
-Astra 的付费端到端 canary。
+所有原先调用 Sol 的角色现在统一使用 `gpt-6-astra`，保留原有的 `max` 或
+`xhigh` 强度；Terra 和 Opus 角色仍按上表选择。推荐入口为 `gpt-astra` 和
+`opus-astra-council`，旧的 `gpt-sol`、`opus-sol-council` 仍作为兼容别名接受。
+显式指定旧 Sol 模型的新调用会在执行前被拒绝。
+
+已有 session 保留原有源码与模型绑定，升级后走 source-drift 接管流程。
+历史 Sol intent 和 receipt 按原始 dispatch 校验链认证并保留原始字节，不能
+据此重新调用 Sol。`opus_sol_council_v2` 等持久化协议标识不改名。
+本次尚未执行 Astra 的付费端到端 canary。
+
+启动新任务前应先用新版本重启 verifier。所有启动模式都会检查其声明的
+profile；即使健康检查 ready，仍选择 Sol 的旧服务也不能启动新付费任务。
 
 ## 快速开始
 
@@ -271,28 +279,28 @@ export VERIFY_TLS_TERMINATED=1
 
 先在本地把 UTF-8 Markdown 格式的题目放进 `agents/generation/data/`。这个目录里的题目和答案默认不会提交到 Git。目录层级会保留在结果路径中，例如 `data/algebra/problem.md` 的输出位于 `results/algebra/problem/`。
 
-使用默认的 GPT Sol root：
+使用默认的 GPT Astra root：
 
 ```bash
 cd agents/generation
 AXIOM_RELAY_RUN_MODE=core \
-AXIOM_RELAY_MAIN_AGENT=gpt-sol \
+AXIOM_RELAY_MAIN_AGENT=gpt-astra \
 PROBLEM_FILE=data/my_problem.md \
 ./tests/run_example.sh
 ```
 
-使用 `max_diversity` 配置的 Opus + Sol council：
+使用 `max_diversity` 配置的 Opus + Astra council：
 
 ```bash
 cd agents/generation
 AXIOM_RELAY_RUN_MODE=core \
-AXIOM_RELAY_MAIN_AGENT=opus-sol-council \
+AXIOM_RELAY_MAIN_AGENT=opus-astra-council \
 AXIOM_RELAY_MODEL_POLICY_PROFILE=max_diversity \
 PROBLEM_FILE=data/my_problem.md \
 ./tests/run_example.sh
 ```
 
-如果不设置这些环境变量，直接在终端运行 `./tests/run_example.sh`，脚本会先让你输入题目路径，再打开运行模式选择器。非交互运行必须设置 `PROBLEM_FILE`，仓库不再假定存在示例题目。没有手动指定 Python 时，GPT-Sol 和 reviewed 模式会自动使用文档中创建的 `agents/.generation-venv/bin/python`。
+如果不设置这些环境变量，直接在终端运行 `./tests/run_example.sh`，脚本会先让你输入题目路径，再打开运行模式选择器。非交互运行必须设置 `PROBLEM_FILE`，仓库不再假定存在示例题目。没有手动指定 Python 时，GPT-Astra 和 reviewed 模式会自动使用文档中创建的 `agents/.generation-venv/bin/python`。
 
 ## 证明卡住时，向 GPT Pro 追问一个 gap
 
@@ -304,7 +312,7 @@ PROBLEM_FILE=data/my_problem.md \
 - 可直接复制的精确问题 `copy_paste_prompt`
 - 由 host 计算的 digest，用来绑定当前 statement、引用中的有效 memory records 和 ledger head
 
-不必等三条全局路线全部失败才提出局部问题。生成查询包不会打开 ChatGPT，也不会消耗 Pro 对话次数，真正发送问题的人只能是 owner。Reviewed/GPT-Sol lanes 无权调用这四个 root 工具，只负责把 gap 和失败证据交回 canonical root。
+不必等三条全局路线全部失败才提出局部问题。生成查询包不会打开 ChatGPT，也不会消耗 Pro 对话次数，真正发送问题的人只能是 owner。Reviewed/GPT-Astra lanes 无权调用这四个 root 工具，只负责把 gap 和失败证据交回 canonical root。
 
 复制给 Pro 的 prompt 必须完全自包含。默认 Pro 无法访问仓库、AxiomRelay memory、record id、hash、本机文件或之前的对话。因此，回答该 gap 所需的定义、假设、已确定事实、失败机制和边界条件都必须直接写成数学内容。用于溯源的 id 和 digest 只保留在私有 packet 与 receipt 中，不得写入外部 prompt。
 
@@ -387,11 +395,11 @@ agents/.generation-venv/bin/python -I -B agents/claude_core.py \
   "$PROBLEM_ID" "$STATEMENT_SHA256" gpt_pro < pro-answer.md
 ```
 
-导入后，为该 statement 启动一轮新的 Opus + Sol council。外部候选会按下面的规则流转：
+导入后，为该 statement 启动一轮新的 Opus + Astra council。外部候选会按下面的规则流转：
 
 1. Host 保存原始内容，并把不可变字节绑定到 problem 和 statement digest。
 2. Opus 必须把 candidate marker 和准确的 projection path 绑定到其中一条路线。
-3. Sol 最初提交的 blind slate 与外部候选相互独立。
+3. Astra 最初提交的 blind slate 与外部候选相互独立。
 4. 联合 revision 和 final audit 会看到完整候选，必须实际检验它，或者指出致命缺陷。
 5. 被绑定的 proof lane 只能读取指定 projection。
 6. Verifier 仍只判断最终证明。外部候选本身不具备发布权。
@@ -429,7 +437,7 @@ PROBLEM_FILE=data/my_problem.md \
 | 设置 | 含义 |
 |---|---|
 | `AXIOM_RELAY_RUN_MODE` | `core`、`reviewed` 或 `prompt` |
-| `AXIOM_RELAY_MAIN_AGENT` | `gpt-sol`、`opus`、`fable`、`opus-sol-council` 或 `prompt` |
+| `AXIOM_RELAY_MAIN_AGENT` | `gpt-astra`、`opus`、`fable`、`opus-astra-council` 或 `prompt` |
 | `AXIOM_RELAY_MODEL_POLICY_PROFILE` | `compatible`、`balanced`、`economy` 或 `max_diversity` |
 | `AXIOM_RELAY_REVIEW_RUN_ID` | `reviewed` 模式必填的运行 ID |
 | `AXIOM_RELAY_CLAUDE_SESSION_ID` | 要恢复的 Claude root session |

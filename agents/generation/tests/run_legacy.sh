@@ -55,13 +55,20 @@ if [[ -z "$PROBLEM_FILE" ]]; then
   exit 1
 fi
 MODEL_POLICY_PROFILE="${RETHLAS_MODEL_POLICY_PROFILE:-compatible}"
-generator_default_model="gpt-5.6-sol"
-if [[ "$MODEL_POLICY_PROFILE" == max_diversity ]]; then
-  generator_default_model="gpt-6-astra"
+generator_default_model="gpt-6-astra"
+if [[ "$MODEL_POLICY_PROFILE" == economy ]]; then
+  generator_default_model="gpt-5.6-terra"
 fi
 MODEL="${MODEL:-$generator_default_model}"
+if [[ "$MODEL" == gpt-5.6-sol ]]; then
+  echo "gpt-5.6-sol is historical only; use gpt-6-astra for new runs." >&2
+  exit 1
+fi
 REASONING_EFFORT="${REASONING_EFFORT:-max}"
-MAIN_AGENT_SELECTION="${RETHLAS_MAIN_AGENT:-gpt-sol}"
+MAIN_AGENT_SELECTION="${RETHLAS_MAIN_AGENT:-gpt-astra}"
+if [[ "$MAIN_AGENT_SELECTION" == gpt-sol ]]; then
+  MAIN_AGENT_SELECTION="gpt-astra"
+fi
 EXTERNAL_PLAN_SET_SELECTION="${RETHLAS_EXTERNAL_PLAN_SET:-}"
 EXTERNAL_PLAN_SHA256="${RETHLAS_EXTERNAL_PLAN_SHA256:-}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
@@ -127,8 +134,8 @@ unset RETHLAS_BOUND_EXTERNAL_PLAN_PATH
 unset RETHLAS_BOUND_EXTERNAL_PLAN_SHA256
 unset RETHLAS_BOUND_EXTERNAL_PLAN_ROOT_SESSION_ID
 
-if [[ "$MAIN_AGENT_SELECTION" != gpt-sol ]]; then
-  echo "run_legacy.sh is the GPT Sol root/cohort executor; use run_example.sh for Claude root." >&2
+if [[ "$MAIN_AGENT_SELECTION" != gpt-astra ]]; then
+  echo "run_legacy.sh is the GPT Astra root/cohort executor; use run_example.sh for Claude root." >&2
   exit 1
 fi
 if [[ -n "$EXTERNAL_PLAN_SET_SELECTION" || -n "$EXTERNAL_PLAN_SHA256" ]]; then
@@ -136,8 +143,8 @@ if [[ -n "$EXTERNAL_PLAN_SET_SELECTION" || -n "$EXTERNAL_PLAN_SHA256" ]]; then
     echo "External Claude cohort execution requires both plan path and SHA-256." >&2
     exit 1
   fi
-  if [[ "$MAIN_AGENT_SELECTION" != gpt-sol ]]; then
-    echo "External Claude plans require the GPT Sol cohort executor." >&2
+  if [[ "$MAIN_AGENT_SELECTION" != gpt-astra ]]; then
+    echo "External Claude plans require the GPT Astra cohort executor." >&2
     exit 1
   fi
   if [[ "$STOP_AFTER_CURRENT_COHORT" != 1 || "$MAX_ITERATIONS" != 1 ]]; then
@@ -2288,7 +2295,7 @@ if ! verifier_is_ready; then
   echo "WARNING: explicit offline-draft mode is active; verified completion is unavailable."
   echo ""
 fi
-if verifier_is_ready && [[ "$MODEL_POLICY_PROFILE" != compatible ]]; then
+if verifier_is_ready; then
   verifier_profile_url="${VERIFY_READY_URL%/ready}/profile"
   if ! verifier_profile_json="$(
     curl -sf --connect-timeout 2 --max-time 5 "$verifier_profile_url"
@@ -2312,6 +2319,13 @@ if (
     or value.get("automatic_tiebreaker") is not False
     or not isinstance(passes, list)
     or len(passes) != 2
+):
+    raise SystemExit(1)
+if any(
+    not isinstance(item, dict)
+    or item.get("model") == "gpt-5.6-sol"
+    or item.get("launch_model") == "gpt-5.6-sol"
+    for item in passes
 ):
     raise SystemExit(1)
 if expected in {"balanced", "economy", "max_diversity"} and (
@@ -2463,7 +2477,7 @@ PY
       "$problem_rel" "$RETHLAS_EXPECTED_STATEMENT_SHA256" \
       "$EXTERNAL_PLAN_SHA256"
   })"; then
-    echo "External Claude plan set failed closed; no Sol cohort was started." >&2
+    echo "External Claude plan set failed closed; no Astra cohort was started." >&2
     exit 70
   fi
   if ! external_metadata="$({
@@ -3010,7 +3024,7 @@ for ((iter = 0; iter < MAX_ITERATIONS; iter += 1)); do
     else
       external_retrieval_prompt="The SHA-bound problem does not permit external retrieval. Do not call Matlas, arXiv, web, browser, or any other remote source, and propagate this disabled mode to all three context-free solvers."
     fi
-    prompt="${prompt} This physical GPT Sol process is a bounded cohort executor for a persistent Claude canonical root, not a route-design root. Before any mathematical action, read ${EXTERNAL_PLAN_RELATIVE} and verify its SHA-256 is ${EXTERNAL_PLAN_SHA256}. The plan set is host-validated and bound to Claude root session ${EXTERNAL_PLAN_ROOT_SESSION_ID}, with statement_bound_retrieval_mode=${EXTERNAL_RETRIEVAL_MODE}. Skip fresh route generation and do not replace, rename, broaden, or add plans. Publish the ordinary one pre-fanout checkpoint by calling memory_append_batch exactly once with problem_id=${problem_rel} and items=[]; the trusted MCP atomically materializes and revalidates the exact three host-bound plans. Do not manually reproduce their JSON in that call. Then invoke \$legacy-three-route to launch exactly one context-free solver per plan. The host has placed this executor in a per-problem filesystem capsule: the visible statement, external plan, declared SHA-bound reference-candidate projection, memory, and results are the complete authorized local inputs. Read every candidate projection named by the bound plan before relying on or auditing it. Never inspect a parent directory, search for MCP/checkpoint examples, or look for any other plan, memory, log, result, statement, Git object, or CLI transcript; the tool schema and \$legacy-three-route payload rule are authoritative. Persist each exact non-candidate terminal report immediately, persist one shared failure synthesis after all three, and return unverified without another cohort. ${external_retrieval_prompt} Do not act as a fourth proof route. A complete candidate may still preempt into the existing verifier fast lane."
+    prompt="${prompt} This physical GPT Astra process is a bounded cohort executor for a persistent Claude canonical root, not a route-design root. Before any mathematical action, read ${EXTERNAL_PLAN_RELATIVE} and verify its SHA-256 is ${EXTERNAL_PLAN_SHA256}. The plan set is host-validated and bound to Claude root session ${EXTERNAL_PLAN_ROOT_SESSION_ID}, with statement_bound_retrieval_mode=${EXTERNAL_RETRIEVAL_MODE}. Skip fresh route generation and do not replace, rename, broaden, or add plans. Publish the ordinary one pre-fanout checkpoint by calling memory_append_batch exactly once with problem_id=${problem_rel} and items=[]; the trusted MCP atomically materializes and revalidates the exact three host-bound plans. Do not manually reproduce their JSON in that call. Then invoke \$legacy-three-route to launch exactly one context-free solver per plan. The host has placed this executor in a per-problem filesystem capsule: the visible statement, external plan, declared SHA-bound reference-candidate projection, memory, and results are the complete authorized local inputs. Read every candidate projection named by the bound plan before relying on or auditing it. Never inspect a parent directory, search for MCP/checkpoint examples, or look for any other plan, memory, log, result, statement, Git object, or CLI transcript; the tool schema and \$legacy-three-route payload rule are authoritative. Persist each exact non-candidate terminal report immediately, persist one shared failure synthesis after all three, and return unverified without another cohort. ${external_retrieval_prompt} Do not act as a fourth proof route. A complete candidate may still preempt into the existing verifier fast lane."
     web_mode="disabled"
   fi
   if [[ "$STOP_AFTER_CURRENT_COHORT" == 1 ]]; then

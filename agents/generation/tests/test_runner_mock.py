@@ -1461,7 +1461,7 @@ if os.environ.get("MOCK_PUBLICATION") == "trusted":
                 "pass_index": 1,
                 "verification_attempt_id": "veratt_" + "1" * 32,
                 "verifier_run_id": "mock-verifier-run-1",
-                "verifier_model": "gpt-5.6-sol",
+                "verifier_model": "gpt-6-astra",
                 "verifier_reasoning_effort": "max",
                 "verifier_service_version": "0.3.0",
                 "verification_role": "primary",
@@ -1472,7 +1472,7 @@ if os.environ.get("MOCK_PUBLICATION") == "trusted":
                 "pass_index": 2,
                 "verification_attempt_id": "veratt_" + "2" * 32,
                 "verifier_run_id": "mock-verifier-run-2",
-                "verifier_model": "gpt-5.6-sol",
+                "verifier_model": "gpt-6-astra",
                 "verifier_reasoning_effort": "max",
                 "verifier_service_version": "0.3.0",
                 "verification_role": "adversarial_full_claim_audit",
@@ -1778,6 +1778,31 @@ raise SystemExit(0)
     )
     fake_claude.chmod(0o755)
     return tests_dir / "run_example.sh", fake_bin
+
+
+def _write_ready_verifier_curl(path: Path) -> None:
+    path.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "if any('/profile' in arg for arg in sys.argv[1:]):\n"
+        "    profile = os.environ.get('RETHLAS_MODEL_POLICY_PROFILE', 'compatible')\n"
+        "    primary = os.environ.get('MOCK_VERIFIER_MODEL', 'gpt-6-astra')\n"
+        "    secondary = 'gpt-5.6-terra' if profile in {'balanced','economy'} else primary\n"
+        "    cold_claude = profile == 'max_diversity'\n"
+        "    if cold_claude: secondary = 'claude-opus-5'\n"
+        "    print(json.dumps({'schema_version':'rethlas_verifier_profile_v1',\n"
+        "        'service_version':'0.4.0', 'profile':profile,\n"
+        "        'fallback_policy':'forbid', 'automatic_tiebreaker':False,\n"
+        "        'passes':[\n"
+        "            {'model':primary,'launch_model':primary,'adapter':'codex_cli','provider':'openai'},\n"
+        "            {'model':secondary,'launch_model':secondary,\n"
+        "             'adapter':'claude_cli' if cold_claude else 'codex_cli',\n"
+        "             'provider':'vertex' if cold_claude else 'openai'}]}))\n"
+        "else:\n"
+        "    print(json.dumps({'status':'ok'}))\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
 
 
 def _mock_environment(
@@ -2740,7 +2765,7 @@ if command == "control-capability-bind":
     assert hashlib.sha256(codex_path.read_bytes()).hexdigest() == payload[
         "codex_bin_sha256"
     ]
-    assert payload["expected_model"] == "gpt-5.6-sol"
+    assert payload["expected_model"] == "gpt-6-astra"
     assert payload["reasoning_effort"] == "max"
     assert payload["review_policy_sha256"] == (
         continuous_digest
@@ -3344,7 +3369,7 @@ for key, expected in (
         hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
     ),
     ("RETHLAS_REVIEW_DB", os.environ["MOCK_CADENCE_EXPECTED_DB"]),
-    ("RETHLAS_REVIEW_EXPECTED_MODEL", "gpt-5.6-sol"),
+    ("RETHLAS_REVIEW_EXPECTED_MODEL", "gpt-6-astra"),
     ("RETHLAS_REVIEW_EXPECTED_REASONING_EFFORT", "max"),
     ("RETHLAS_REVIEW_POLICY_SHA256", selected_review_digest),
     (
@@ -3437,7 +3462,7 @@ if state.get("mock_publication") == "trusted":
                 "pass_index": 1,
                 "verification_attempt_id": "veratt_" + "1" * 32,
                 "verifier_run_id": "mock-verifier-run-1",
-                "verifier_model": "gpt-5.6-sol",
+                "verifier_model": "gpt-6-astra",
                 "verifier_reasoning_effort": "max",
                 "verifier_service_version": "0.3.0",
                 "verification_role": "primary",
@@ -3448,7 +3473,7 @@ if state.get("mock_publication") == "trusted":
                 "pass_index": 2,
                 "verification_attempt_id": "veratt_" + "2" * 32,
                 "verifier_run_id": "mock-verifier-run-2",
-                "verifier_model": "gpt-5.6-sol",
+                "verifier_model": "gpt-6-astra",
                 "verifier_reasoning_effort": "max",
                 "verifier_service_version": "0.3.0",
                 "verification_role": "adversarial_full_claim_audit",
@@ -3742,7 +3767,7 @@ def _cadence_environment(
     extra_environment: dict[str, str] | None = None,
 ) -> dict[str, str]:
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     environment = _mock_environment(
         runner,
@@ -4079,7 +4104,7 @@ def test_mode_prompt_explains_tradeoffs_and_selects_core(tmp_path: Path) -> None
     assert "Choose the route-design main agent" in completed.stderr
     assert "Persistent logical Claude Code root" in completed.stderr
     assert "Mode:       core" in completed.stdout
-    assert "Main agent: gpt-sol" in completed.stdout
+    assert "Main agent: gpt-astra" in completed.stdout
 
 
 def test_noninteractive_launcher_requires_an_explicit_problem_file(
@@ -4368,7 +4393,7 @@ def test_prompted_core_selects_opus_sol_council_with_one_joint_revision(
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "Opus + Sol council" in completed.stderr
+    assert "Opus + Astra council" in completed.stderr
     assert "Claude root model: claude-opus-5" in completed.stdout
     assert "Claude orchestration mode: opus_sol_council_v2" in completed.stdout
     for tool in (
@@ -4432,7 +4457,7 @@ def test_claude_root_launcher_never_relabels_loaded_source_after_atomic_replacem
         "automatic_tiebreaker": False,
         "passes": [
             {
-                "model": "gpt-5.6-sol",
+                "model": "gpt-6-astra",
                 "adapter": "codex_cli",
                 "provider": "openai",
             },
@@ -4459,7 +4484,7 @@ def test_claude_root_launcher_never_relabels_loaded_source_after_atomic_replacem
         mode="trusted",
         extra_environment={
             "RETHLAS_RUN_MODE": "core",
-            "RETHLAS_MAIN_AGENT": "opus-sol-council",
+            "RETHLAS_MAIN_AGENT": "opus-astra-council",
             "SOURCE_LOADED_MARKER": str(loaded_marker),
             "SOURCE_RELEASE_MARKER": str(release_marker),
             "REPLACEMENT_EXECUTED_MARKER": str(replacement_executed),
@@ -4523,7 +4548,7 @@ def test_inflight_root_launcher_pins_loaded_inode_across_atomic_replacement(
     digest_b = hashlib.sha256(source_b.encode("utf-8")).hexdigest()
     assert digest_a != digest_b
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     environment = _mock_environment(
         runner,
@@ -4681,7 +4706,7 @@ def test_opus_sol_council_rejects_explicit_non_diversity_profile_before_models(
         mode="trusted",
         extra_environment={
             "RETHLAS_RUN_MODE": "core",
-            "RETHLAS_MAIN_AGENT": "opus-sol-council",
+            "RETHLAS_MAIN_AGENT": "opus-astra-council",
             "RETHLAS_MODEL_POLICY_PROFILE": "compatible",
             "MOCK_CODEX_CALLS_FILE": str(calls_file),
         },
@@ -4963,7 +4988,7 @@ def test_claude_root_subscription_ignores_default_vertex_settings(
         encoding="utf-8",
     )
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     claude_calls = tmp_path / "claude-calls.jsonl"
     environment = _mock_environment(
@@ -5004,7 +5029,7 @@ def test_claude_root_subscription_binds_auth_method_before_paid_turn(
 ) -> None:
     runner, fake_bin = _make_runner_tree(tmp_path)
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     claude_calls = tmp_path / "claude-calls.jsonl"
     environment = _mock_environment(
@@ -5089,7 +5114,7 @@ def test_claude_root_completes_partial_inherited_vertex_binding_from_launch_mode
         extra_environment={
             "HOME": str(fake_home),
             "RETHLAS_RUN_MODE": "core",
-            "RETHLAS_MAIN_AGENT": "opus-sol-council",
+            "RETHLAS_MAIN_AGENT": "opus-astra-council",
             "RETHLAS_CLAUDE_ROOT_PRINT_CMD": "1",
             "CLAUDE_CODE_USE_VERTEX": "1",
             "ANTHROPIC_VERTEX_PROJECT_ID": "bound-project",
@@ -5169,7 +5194,7 @@ def test_claude_root_injects_only_host_controlled_vertex_thinking_display(
 ) -> None:
     runner, fake_bin = _make_runner_tree(tmp_path)
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     environment_file = tmp_path / "claude-environment.jsonl"
     environment = _mock_environment(
@@ -5678,7 +5703,7 @@ def test_claude_core_executes_one_noninteractive_persistent_turn(
     candidate_projection_root = candidate_projection.parents[1]
     assert candidate_projection.read_text(encoding="utf-8") == candidate_content
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -5744,7 +5769,7 @@ def test_claude_root_stream_projection_filters_thinking_flood(
 ) -> None:
     runner, fake_bin = _make_runner_tree(tmp_path)
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     environment = _mock_environment(
         runner,
@@ -5782,7 +5807,7 @@ def test_claude_root_auto_continues_exact_max_output_error_in_same_session(
 ) -> None:
     runner, fake_bin = _make_runner_tree(tmp_path)
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     calls_file = tmp_path / "claude-calls.jsonl"
     state_file = tmp_path / "claude-max-output-state"
@@ -5836,7 +5861,7 @@ def test_claude_root_continuation_executes_the_same_cli_snapshot_after_upgrade(
 ) -> None:
     runner, fake_bin = _make_runner_tree(tmp_path)
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     claude_origin = fake_bin / "claude"
     original = claude_origin.read_text(encoding="utf-8")
@@ -5926,7 +5951,7 @@ def test_claude_root_does_not_auto_continue_generic_provider_error(
 ) -> None:
     runner, fake_bin = _make_runner_tree(tmp_path)
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     calls_file = tmp_path / "claude-calls.jsonl"
     extra_environment = {
@@ -5965,7 +5990,7 @@ def test_claude_root_does_not_continue_recovered_max_output_event(
 ) -> None:
     runner, fake_bin = _make_runner_tree(tmp_path)
     fake_curl = fake_bin / "curl"
-    fake_curl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _write_ready_verifier_curl(fake_curl)
     fake_curl.chmod(0o755)
     calls_file = tmp_path / "claude-calls.jsonl"
     environment = _mock_environment(
@@ -6288,7 +6313,7 @@ if __name__ == "__main__" and sys.argv[1:2] == ["--migrate-stale-route-council"]
         mode="trusted",
         extra_environment={
             "RETHLAS_RUN_MODE": "core",
-            "RETHLAS_MAIN_AGENT": "gpt-sol",
+            "RETHLAS_MAIN_AGENT": "gpt-astra",
             "RETHLAS_MODEL_POLICY_PROFILE": "invalid-admin-leftover",
             "RETHLAS_CLAUDE_CONTEXT_WINDOW": "invalid",
             "RETHLAS_CLAUDE_ROOT_PRINT_CMD": "invalid",
@@ -6420,7 +6445,7 @@ def test_opus_sol_council_resume_requires_and_preserves_council_mode(
         mode="trusted",
         extra_environment={
             "RETHLAS_RUN_MODE": "core",
-            "RETHLAS_MAIN_AGENT": "opus-sol-council",
+            "RETHLAS_MAIN_AGENT": "opus-astra-council",
             "RETHLAS_CLAUDE_ROOT_PRINT_CMD": "1",
             "RETHLAS_CLAUDE_ROOT_SESSION_ID": session_id,
         },
@@ -6681,7 +6706,7 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
         mode="forged",
         extra_environment={
             "RETHLAS_RUN_MODE": "core",
-            "RETHLAS_MAIN_AGENT": "gpt-sol",
+            "RETHLAS_MAIN_AGENT": "gpt-astra",
             "RETHLAS_EXTERNAL_PLAN_SET": str(plan_path),
                 "RETHLAS_EXTERNAL_PLAN_SHA256": plan_sha256,
                 "RETHLAS_LEGACY_STOP_AFTER_CURRENT_COHORT": "1",
@@ -6786,7 +6811,7 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
     assert f"Claude cohort retrieval mode: {expected_mode}" in completed.stdout
     calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
     root_call = next(call for call in calls if "exec" in call)
-    assert root_call[root_call.index("-m") + 1] == "gpt-5.6-sol"
+    assert root_call[root_call.index("-m") + 1] == "gpt-6-astra"
     prompt = root_call[-1]
     assert "bounded cohort executor for a persistent Claude canonical root" in prompt
     assert plan_sha256 in prompt
@@ -6890,7 +6915,7 @@ def test_host_validated_claude_plan_runs_one_sol_cohort_executor(
         ),
         (
             {"RETHLAS_MAIN_AGENT": "unknown"},
-            "must be gpt-sol, opus, fable, opus-sol-council, or prompt",
+            "must be gpt-astra, opus, fable, opus-astra-council, or prompt",
         ),
     ],
 )
@@ -6937,7 +6962,7 @@ def test_axiom_relay_public_settings_dispatch_core(tmp_path: Path) -> None:
         mode="trusted",
         extra_environment={
             "AXIOM_RELAY_RUN_MODE": "core",
-            "AXIOM_RELAY_MAIN_AGENT": "gpt-sol",
+            "AXIOM_RELAY_MAIN_AGENT": "gpt-astra",
             "AXIOM_RELAY_MODEL_POLICY_PROFILE": "compatible",
         },
     )
@@ -6954,7 +6979,7 @@ def test_axiom_relay_public_settings_dispatch_core(tmp_path: Path) -> None:
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "Mode:       core" in completed.stdout
-    assert "Main agent: gpt-sol" in completed.stdout
+    assert "Main agent: gpt-astra" in completed.stdout
 
 
 def test_axiom_relay_setting_conflict_fails_before_dispatch(tmp_path: Path) -> None:
@@ -7096,7 +7121,7 @@ def test_owned_legacy_runner_fd_is_snapshotted_from_any_shared_offset(
         mode="trusted",
         extra_environment={
             "RETHLAS_RUN_MODE": "core",
-            "RETHLAS_MAIN_AGENT": "gpt-sol",
+            "RETHLAS_MAIN_AGENT": "gpt-astra",
         },
     )
     runner_descriptor = os.open(legacy_runner, os.O_RDONLY)
@@ -7207,8 +7232,17 @@ def test_legacy_binds_subagents_to_selected_root_model_and_effort(
     assert 'agents.default_subagent_reasoning_effort="high"' in configs
 
 
-def test_max_diversity_launches_astra_max_for_root_and_subagents(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("profile", "expected_model"),
+    [
+        ("compatible", "gpt-6-astra"),
+        ("balanced", "gpt-6-astra"),
+        ("max_diversity", "gpt-6-astra"),
+        ("economy", "gpt-5.6-terra"),
+    ],
+)
+def test_profiles_launch_current_models_for_root_and_subagents(
+    tmp_path: Path, profile: str, expected_model: str,
 ) -> None:
     runner, fake_bin = _make_runner_tree(tmp_path)
     calls_file = tmp_path / "codex-calls.jsonl"
@@ -7217,7 +7251,7 @@ def test_max_diversity_launches_astra_max_for_root_and_subagents(
         fake_bin,
         mode="trusted",
         extra_environment={
-            "AXIOM_RELAY_MODEL_POLICY_PROFILE": "max_diversity",
+            "AXIOM_RELAY_MODEL_POLICY_PROFILE": profile,
             "MOCK_CODEX_CALLS_FILE": str(calls_file),
         },
     )
@@ -7230,14 +7264,107 @@ def test_max_diversity_launches_astra_max_for_root_and_subagents(
     assert completed.returncode == 0, completed.stdout + completed.stderr
     calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
     call = next(value for value in calls if "exec" in value)
-    assert call[call.index("-m") + 1] == "gpt-6-astra"
+    assert call[call.index("-m") + 1] == expected_model
     configs = [
         call[index + 1] for index, value in enumerate(call[:-1])
         if value == "--config"
     ]
     assert 'model_reasoning_effort="max"' in configs
-    assert 'agents.default_subagent_model="gpt-6-astra"' in configs
+    assert f'agents.default_subagent_model="{expected_model}"' in configs
     assert 'agents.default_subagent_reasoning_effort="max"' in configs
+
+
+@pytest.mark.parametrize("selector", ["gpt-astra", "gpt-sol"])
+@pytest.mark.parametrize("direct", [False, True])
+def test_astra_and_legacy_root_selectors_dispatch_astra(
+    tmp_path: Path, selector: str, direct: bool,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    calls_file = tmp_path / "codex-calls.jsonl"
+    environment = _mock_environment(
+        runner, fake_bin, mode="trusted",
+        extra_environment={
+            "AXIOM_RELAY_MAIN_AGENT": selector,
+            "RETHLAS_MAIN_AGENT": selector,
+            "MOCK_CODEX_CALLS_FILE": str(calls_file),
+        },
+    )
+    environment.pop("MODEL", None)
+    command = runner.with_name("run_legacy.sh") if direct else runner
+    completed = subprocess.run(
+        [str(command)], cwd=runner.parent.parent, env=environment,
+        text=True, capture_output=True, timeout=30, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
+    executions = [call for call in calls if "exec" in call]
+    assert executions
+    assert all(call[call.index("-m") + 1] == "gpt-6-astra" for call in executions)
+
+
+@pytest.mark.parametrize("mode", ["core", "reviewed"])
+def test_retired_sol_override_fails_before_codex_calls(tmp_path: Path, mode: str) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    calls_file = tmp_path / "codex-calls.jsonl"
+    settings = {
+        "AXIOM_RELAY_RUN_MODE": mode,
+        "MODEL": "gpt-5.6-sol",
+        "MOCK_CODEX_CALLS_FILE": str(calls_file),
+    }
+    if mode == "reviewed":
+        settings["AXIOM_RELAY_REVIEW_RUN_ID"] = "retired-model-check"
+    environment = _mock_environment(runner, fake_bin, mode="trusted", extra_environment=settings)
+    completed = subprocess.run(
+        [str(runner)], cwd=runner.parent.parent, env=environment,
+        text=True, capture_output=True, timeout=20, check=False,
+    )
+    assert completed.returncode == 1
+    assert "historical only" in completed.stderr
+    assert not calls_file.exists()
+
+
+@pytest.mark.parametrize(
+    ("mode", "root"), [("core", "gpt-astra"), ("core", "opus"), ("reviewed", "gpt-astra")]
+)
+def test_ready_but_retired_sol_verifier_starts_no_paid_root(
+    tmp_path: Path, mode: str, root: str,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    _write_ready_verifier_curl(fake_bin / "curl")
+    calls_file = tmp_path / "codex-calls.jsonl"
+    claude_calls = tmp_path / "claude-calls.jsonl"
+    settings = {
+        "AXIOM_RELAY_RUN_MODE": mode,
+        "AXIOM_RELAY_MAIN_AGENT": root,
+        "MOCK_VERIFIER_MODEL": "gpt-5.6-sol",
+        "MOCK_CODEX_CALLS_FILE": str(calls_file),
+        "MOCK_CLAUDE_CALLS_FILE": str(claude_calls),
+    }
+    if mode == "reviewed":
+        _adapter, state_path, adapter_calls = _install_mock_cadence_adapter(tmp_path)
+        settings.update({
+            "RETHLAS_RUN_MODE": "reviewed",
+            "RETHLAS_REVIEW_CADENCE_POLICY": "rethlas_continuous_supervisor_v1",
+            "MOCK_EXPECT_REVIEW_POLICY": "rethlas_continuous_supervisor_v1",
+        })
+        environment = _cadence_environment(
+            runner, fake_bin, state_path, adapter_calls,
+            dispositions=["hard_stopped"], max_iterations=1,
+            extra_environment=settings,
+        )
+    else:
+        environment = _mock_environment(
+            runner, fake_bin, mode="forged", extra_environment=settings
+        )
+    completed = subprocess.run(
+        [str(runner)], cwd=runner.parent.parent, env=environment,
+        text=True, capture_output=True, timeout=30, check=False,
+    )
+    assert completed.returncode == 1
+    assert "Verifier service does not match" in completed.stderr
+    assert not claude_calls.exists()
+    if calls_file.exists():
+        assert not any("exec" in json.loads(line) for line in calls_file.read_text().splitlines())
 
 
 def test_legacy_rejects_invalid_offline_draft_selection_before_codex(

@@ -60,14 +60,14 @@ class Capability:
 _CODEX_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
 _LUNA_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 _ASTRA_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
-MAX_DIVERSITY_CODEX_MODEL = "gpt-6-astra"
+DEFAULT_CODEX_MODEL = "gpt-6-astra"
+MAX_DIVERSITY_CODEX_MODEL = DEFAULT_CODEX_MODEL
 
 
 def _capabilities() -> tuple[Capability, ...]:
     values: list[Capability] = []
     for model, efforts in (
         (MAX_DIVERSITY_CODEX_MODEL, _ASTRA_EFFORTS),
-        ("gpt-5.6-sol", _CODEX_EFFORTS),
         ("gpt-5.6-terra", _CODEX_EFFORTS),
         ("gpt-5.6-luna", _LUNA_EFFORTS),
     ):
@@ -499,25 +499,25 @@ def resolve_profile(
     )
     if profile == "compatible":
         generator = _codex_actor(
-            model="gpt-5.6-sol", effort="max", role="generator"
+            model="gpt-6-astra", effort="max", role="generator"
         )
         passes = [
             _codex_actor(
-                model="gpt-5.6-sol", effort="xhigh", role="verifier", pass_index=1
+                model="gpt-6-astra", effort="xhigh", role="verifier", pass_index=1
             ),
             _codex_actor(
-                model="gpt-5.6-sol", effort="xhigh", role="verifier", pass_index=2
+                model="gpt-6-astra", effort="xhigh", role="verifier", pass_index=2
             ),
         ]
         distinct_models = False
         adversarial_distinct = False
     elif profile == "balanced":
         generator = _codex_actor(
-            model="gpt-5.6-sol", effort="max", role="generator"
+            model="gpt-6-astra", effort="max", role="generator"
         )
         passes = [
             _codex_actor(
-                model="gpt-5.6-sol", effort="xhigh", role="verifier", pass_index=1
+                model="gpt-6-astra", effort="xhigh", role="verifier", pass_index=1
             ),
             _codex_actor(
                 model=_secondary_codex_model(root_model),
@@ -534,7 +534,7 @@ def resolve_profile(
         )
         passes = [
             _codex_actor(
-                model="gpt-5.6-sol", effort="xhigh", role="verifier", pass_index=1
+                model="gpt-6-astra", effort="xhigh", role="verifier", pass_index=1
             ),
             _codex_actor(
                 model=_secondary_codex_model(root_model),

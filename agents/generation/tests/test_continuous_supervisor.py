@@ -629,7 +629,7 @@ def test_reviewer_request_is_content_bound_and_exactly_once() -> None:
     snapshot = _snapshot(_summary("a"))
     request = supervisor.build_reviewer_request(
         snapshot=snapshot,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256="f" * 64,
     )
@@ -642,7 +642,7 @@ def test_reviewer_request_is_content_bound_and_exactly_once() -> None:
     with pytest.raises(supervisor.ContinuousSupervisorError, match="digest mismatch"):
         supervisor.build_reviewer_request(
             snapshot=snapshot,
-            expected_model="gpt-5.6-sol",
+            expected_model="gpt-6-astra",
             reasoning_effort="max",
             policy_sha256="f" * 64,
         )
@@ -1544,7 +1544,7 @@ def test_comparative_review_resumes_parked_child_without_root_terminal(
     request = ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=review_id,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         lease=lease,
     )
@@ -1614,7 +1614,7 @@ def test_reviewer_resume_becomes_restart_only_after_host_observed_root_rollover(
     ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=review_id,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         lease=lease,
     )
@@ -1651,6 +1651,7 @@ def test_reviewer_result_replay_uses_the_frozen_decision_not_current_runtime(
     ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=review_id,
+        # A historical Sol result remains replayable without a new dispatch.
         expected_model="gpt-5.6-sol",
         reasoning_effort="max",
         lease=lease,
@@ -1684,7 +1685,7 @@ def test_reviewer_result_replay_rejects_corrupt_stored_commitments(
     ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=review_id,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         lease=lease,
     )
@@ -1735,7 +1736,7 @@ def test_all_red_cohort_requires_checkpoint_before_owner_wait(tmp_path) -> None:
     ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=review_id,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         lease=lease,
     )
@@ -1824,7 +1825,7 @@ def test_next_cohort_excludes_retired_history_and_binds_progress_history(
     ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=first_due["review_id"],
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         lease=lease,
     )

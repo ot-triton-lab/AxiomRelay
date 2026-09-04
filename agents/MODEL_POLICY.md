@@ -54,7 +54,7 @@ The existing runtime has three different persistence behaviors.
 | Actor | Current process behavior | Current memory behavior |
 |---|---|---|
 | Claude Root | One headless process per turn, resumed by Claude session id | Native Claude session plus AxiomRelay durable memory |
-| Opus-Sol route council | Three bounded Sol/max calls around Opus's merge and one adjudication pass; only statement-authorized Matlas/arXiv retrieval is exposed | Immutable phase and retrieval receipts only; no shell, workspace, general web, lane, or canonical-memory authority |
+| Opus-Astra route council | Three bounded Astra/max calls around Opus's merge and one adjudication pass; only statement-authorized Matlas/arXiv retrieval is exposed | Immutable phase and retrieval receipts only; no shell, workspace, general web, lane, or canonical-memory authority |
 | Legacy Codex Root | Fresh `codex exec --ephemeral` iteration | AxiomRelay durable memory only |
 | Reviewed Codex Root | Persistent app-server thread with epoch handoff | App-server context plus durable ledger and memory |
 | Generator | Context-free Codex lanes inside one admitted cohort | Terminal reports and canonical memory only |
@@ -77,7 +77,7 @@ owner-selected model policy
     persistent logical Root
     Claude session or Codex session
              |
-             | optional bounded Opus-Sol route council
+             | optional bounded Opus-Astra route council
              | (blind slates -> one joint revision -> read-only audit)
              |
              | one host-admitted cohort
@@ -130,7 +130,7 @@ Schema alone cannot establish.
   "generator": {
     "adapter": "codex_cli",
     "provider": "openai",
-    "model": "gpt-5.6-sol",
+    "model": "gpt-6-astra",
     "effort": "max",
     "lane_policy": "uniform",
     "max_live_paid_lanes": 3,
@@ -144,8 +144,8 @@ Schema alone cannot establish.
         "role": "primary",
         "adapter": "codex_cli",
         "provider": "openai",
-        "model": "gpt-5.6-sol",
-        "launch_model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
+        "launch_model": "gpt-6-astra",
         "effort": "xhigh",
         "session_mode": "cold"
       },
@@ -227,7 +227,7 @@ profile name, is authoritative.
 
 | Profile | Root | Generator | Verifiers | Purpose |
 |---|---|---|---|---|
-| `compatible` | current selected Root | current Sol configuration | current two-pass configuration | zero behavioral migration |
+| `compatible` | current selected Root | current Astra configuration | current two-pass configuration | zero behavioral migration |
 | `balanced` | owner-selected persistent Root | one strong uniform model | two different Codex models | first production selectable policy |
 | `max_diversity` | owner-selected persistent Root | one strong uniform model | different model families and preferably different providers | reduce correlated blind spots |
 | `economy` | lower-cost eligible Root | lower-cost uniform Generator | retain two strong cold Verifiers | reduce search cost without weakening publication quorum |
@@ -323,7 +323,7 @@ durable memory exists. It does not replay the complete ledger or transcript.
   executable digest.
 - Require explicit takeover after binding drift.
 - In `opus_sol_council_v2`, keep Opus as the sole root while an isolated
-  GPT-5.6 Sol/max seat supplies an independent blind slate with fixed direct,
+  GPT-6 Astra/max seat supplies an independent blind slate with fixed direct,
   orthogonal, and adversarial route roles, one
   keep/revise/replace review, and one non-editing final audit. Opus merges and
   adjudicates once; the accepted exact routes and council receipt gate fanout.
@@ -331,9 +331,9 @@ durable memory exists. It does not replay the complete ledger or transcript.
   every fatal finding without changing plan bytes or seals a corrected plan
   whose changed route ids exactly match findings marked corrected. Override
   prose never substitutes for executable plan bytes.
-  Fixed Sol plan ids, explicit separation claims, and normalized host-side
+  Fixed Astra plan ids, explicit separation claims, and normalized host-side
   mechanism/scope checks reject cosmetic diversity.
-  Sol review and finding wire objects are keyed by the exact phase-bound route
+  Astra review and finding wire objects are keyed by the exact phase-bound route
   ids and normalized into slate-ordered durable arrays. Canonical-memory
   publication is host-fenced until acceptance, the first batch must equal the
   complete three-route final plan, and cohort admission additionally requires
@@ -342,13 +342,13 @@ durable memory exists. It does not replay the complete ledger or transcript.
   one host-source digest. A detached single-dispatch worker seals the raw
   execution before the host derives settlement and receipt; a stopped worker
   without a result becomes a durable `execution_unknown` terminal artifact, so
-  crash or concurrent reconciliation cannot repay the Sol call. Phase-finalize
+  crash or concurrent reconciliation cannot repay the Astra call. Phase-finalize
   locks fence rejected reports, settlements, and receipts against an immutable
   source-drift artifact snapshot.
   Failed takeovers follow the bounded predecessor chain to the nearest council,
   inherit its explicit lineage, and increment the round; council lineage also
   cannot downgrade to single-root mode.
-  If the statement explicitly permits retrieval, the Sol seat receives only
+  If the statement explicitly permits retrieval, the Astra seat receives only
   Matlas search, metadata-gated arXiv search, and the official arXiv reader,
   with the statement cutoff enforced at both arXiv gates under durable budgets.
   Retrieval-ledger timestamps remain monotone across wall-clock rollback.
@@ -607,7 +607,7 @@ policy mutation and no paid successor.
 - Root submit before native session id is recorded;
 - native session accepted before turn receipt is written;
 - cohort submit before Generator process acknowledgement;
-- Sol phase worker launch, marker, raw execution, settlement, and receipt;
+- Astra phase worker launch, marker, raw execution, settlement, and receipt;
 - cohort worker marker before its durable receipt;
 - Pass 1 correct before Pass 2 intent;
 - Pass 2 accepted before publication receipt;
@@ -676,16 +676,16 @@ Observed zero-model smoke results:
 
 | Profile | Result | Generator | Verifiers |
 |---|---|---|---|
-| `compatible` | resolved | Sol | Sol, Sol |
-| `balanced` | resolved | Sol | Sol, Terra |
-| `economy` | resolved | Terra | Sol, Terra |
+| `compatible` | resolved | Astra | Astra, Astra |
+| `balanced` | resolved | Astra | Astra, Terra |
+| `economy` | resolved | Terra | Astra, Terra |
 | `max_diversity` | resolved; Astra runtime canary pending | GPT-6 Astra `max` | GPT-6 Astra `max`, cold Claude Opus 5 1M `max` |
 
 The cold Claude adapter passes fake-provider process, auth, provider, tool
 isolation, nonpersistent session, model fallback, raw-JSON/local-schema, and
 Pass 2 routing tests. All resolver smoke paths report zero writes and zero paid
 actors.
-The paid verifier canary used one exact proof and two independent runs. Sol
+The historical paid verifier canary used one exact proof and two independent runs. Sol
 `xhigh` returned correct first, then Vertex Opus 5 1M `max` returned correct as
 the adversarial pass. Publication occurred only after quorum two; verified and
 draft bytes matched. Host telemetry recorded 12,842 Sol tokens and 3,182 Opus
@@ -695,9 +695,13 @@ service audit. The planned v4 model-policy digest and provider binding remain a
 separate Milestone 2 release gate.
 The canary above is historical and used Sol. The current `max_diversity`
 policy selects `gpt-6-astra` at `max` for generation, OpenAI council seats,
-and Pass 1; Opus Pass 2 remains at `max`. Other profiles retain their existing
-models and efforts. The legacy `gpt-sol` / `opus-sol-council` entrypoint names
-remain stable. A new Astra paid canary has not been run.
+and Pass 1; Opus Pass 2 remains at `max`. All other former Sol roles also use
+Astra, retaining their existing effort. Terra and Opus roles are unchanged.
+The canonical entrypoints are `gpt-astra` and `opus-astra-council`; `gpt-sol`
+and `opus-sol-council` remain compatibility aliases. Historical model names
+and record bytes remain unchanged and are authenticated only for retirement;
+fresh dispatch remains restricted to the current model policy. A new Astra
+paid canary has not been run.
 When the Root is also Opus 5, `require_adversarial_distinct_from_root` is false
 by explicit owner policy; Verifier Pass 1 and Pass 2 remain distinct across Astra
 and Opus as well as OpenAI and Vertex.

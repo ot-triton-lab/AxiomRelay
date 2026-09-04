@@ -13,7 +13,7 @@ if [[ -z "$PROBLEM_FILE" ]]; then
   echo "PROBLEM_FILE is required (for example data/my_problem.md)." >&2
   exit 1
 fi
-MODEL="${MODEL:-gpt-5.6-sol}"
+MODEL="${MODEL:-gpt-6-astra}"
 REASONING_EFFORT="${REASONING_EFFORT:-max}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
 DEEP_WORK_MINUTES="${RETHLAS_DEEP_WORK_MINUTES:-60}"
@@ -33,6 +33,10 @@ NONFRESH_EXPECTED_TURN_ID="${RETHLAS_NONFRESH_EXPECTED_TURN_ID:-}"
 NONFRESH_CONTROL_ONLY=0
 if [[ "$NONFRESH_RESUME_DRY_RUN" == 1 || "$NONFRESH_STALE_RECONCILE" == 1 ]]; then
   NONFRESH_CONTROL_ONLY=1
+fi
+if [[ "$MODEL" == gpt-5.6-sol && "$NONFRESH_CONTROL_ONLY" != 1 ]]; then
+  echo "gpt-5.6-sol is historical only; use gpt-6-astra for new runs." >&2
+  exit 1
 fi
 HOTJOIN_DB="$HOTJOIN_DB_DEFAULT"
 if [[ "$NONFRESH_RESUME_DRY_RUN" == 1 || "$NONFRESH_STALE_RECONCILE" == 1 ]]; then
@@ -4048,6 +4052,43 @@ if ! curl -sf --connect-timeout 2 --max-time 30 \
   echo "Verification service is not ready at ${VERIFY_READY_URL}." >&2
   echo "Refusing to start a paid reviewed root before the zero-model ready gate passes." >&2
   exit 1
+fi
+if [[ "$NONFRESH_CONTROL_ONLY" != 1 ]]; then
+  verifier_profile_url="${VERIFY_READY_URL%/ready}/profile"
+  if ! verifier_profile_json="$(
+    curl -sf --connect-timeout 2 --max-time 5 "$verifier_profile_url"
+  )"; then
+    echo "Verifier profile is unavailable; refusing a paid reviewed root." >&2
+    exit 1
+  fi
+  if ! RETHLAS_VERIFIER_PROFILE_JSON="$verifier_profile_json" \
+      "$TRUSTED_PYTHON_BIN" -I -B - <<'PY'
+import json
+import os
+
+value = json.loads(os.environ["RETHLAS_VERIFIER_PROFILE_JSON"])
+passes = value.get("passes")
+if (
+    value.get("schema_version") != "rethlas_verifier_profile_v1"
+    or value.get("profile") != "compatible"
+    or value.get("fallback_policy") != "forbid"
+    or value.get("automatic_tiebreaker") is not False
+    or not isinstance(passes, list)
+    or len(passes) != 2
+    or any(
+        not isinstance(item, dict)
+        or item.get("model") == "gpt-5.6-sol"
+        or item.get("launch_model") == "gpt-5.6-sol"
+        for item in passes
+    )
+):
+    raise SystemExit(1)
+PY
+  then
+    echo "Verifier service does not match the current compatible policy; zero paid roots started." >&2
+    exit 1
+  fi
+  unset verifier_profile_url verifier_profile_json
 fi
 TRUSTED_MCP_ENV_TOML="$("$TRUSTED_PYTHON_BIN" -I -B - <<'PY'
 import json

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Persistent logical Claude mathematical root. One launcher invocation may
 # span multiple same-session Claude processes only when a process terminates
-# with the exact max-output-token error. GPT Sol cohorts are admitted only
+# with the exact max-output-token error. GPT Astra cohorts are admitted only
 # through the role-gated root MCP.
 set -euo pipefail
 
@@ -127,7 +127,7 @@ case "$MAIN_AGENT" in
     CLAUDE_PROVIDER_MODEL_ENV="ANTHROPIC_DEFAULT_OPUS_MODEL"
     CLAUDE_ORCHESTRATION_MODE="single_root"
     ;;
-  opus-sol-council)
+  opus-astra-council|opus-sol-council)
     CLAUDE_CANONICAL_MODEL="claude-opus-5"
     CLAUDE_LAUNCH_MODEL="claude-opus-5[1m]"
     CLAUDE_CONTEXT_WINDOW="${CONTEXT_WINDOW_SELECTION:-1000000}"
@@ -143,7 +143,7 @@ case "$MAIN_AGENT" in
     CLAUDE_ORCHESTRATION_MODE="single_root"
     ;;
   *)
-    echo "Claude core requires RETHLAS_MAIN_AGENT=opus, fable, or opus-sol-council." >&2
+    echo "Claude core requires RETHLAS_MAIN_AGENT=opus, fable, or opus-astra-council." >&2
     exit 1
     ;;
 esac
@@ -158,7 +158,7 @@ esac
 if [[ "$CLAUDE_ORCHESTRATION_MODE" == opus_sol_council_v2 ]]; then
   if [[ "$MODEL_POLICY_PROFILE_WAS_EXPLICIT" == 1 \
      && "$MODEL_POLICY_PROFILE" != max_diversity ]]; then
-    echo "The Opus-Sol council requires model-policy profile=max_diversity." >&2
+    echo "The Opus-Astra council requires model-policy profile=max_diversity." >&2
     exit 1
   fi
   MODEL_POLICY_PROFILE="max_diversity"
@@ -1119,7 +1119,7 @@ if [[ "${CLAUDE_CODE_USE_VERTEX:-}" =~ ^(1|true|TRUE)$ ]]; then
 fi
 unset CLAUDE_VERTEX_ENVIRONMENT_INHERITED CLAUDE_VERTEX_ENVIRONMENT_INCOMPLETE
 
-# The downstream Sol executor rejects bytecode anywhere in its trusted source
+# The downstream Astra executor rejects bytecode anywhere in its trusted source
 # trees. Detect the same concrete contamination before buying a Claude root
 # turn. Do not delete it here: unchecked bytecode is executable input and must
 # remain an explicit operator-visible trust failure.
@@ -1129,7 +1129,7 @@ if [[ "$PRINT_COMMAND" == 0 ]]; then
       \( -type d -name __pycache__ -o -type f \( -name '*.pyc' -o -name '*.pyo' \) \) \
       -print -quit
   })"; then
-    echo "Could not inspect the trusted Sol runtime for Python bytecode." >&2
+    echo "Could not inspect the trusted Astra runtime for Python bytecode." >&2
     exit 1
   fi
   if [[ -n "$forbidden_bytecode" ]]; then
@@ -1774,7 +1774,7 @@ if [[ "$PRINT_COMMAND" == 0 ]] \
   echo "Verifier is not ready at $VERIFY_READY_URL; refusing Claude root start." >&2
   exit 1
 fi
-if [[ "$PRINT_COMMAND" == 0 && "$MODEL_POLICY_PROFILE" != compatible ]]; then
+if [[ "$PRINT_COMMAND" == 0 ]]; then
   verifier_profile_url="${VERIFY_READY_URL%/ready}/profile"
   if ! verifier_profile_json="$(
     curl -sf --connect-timeout 2 --max-time 5 "$verifier_profile_url"
@@ -1799,6 +1799,13 @@ if (
     raise SystemExit(1)
 passes = value.get("passes")
 if not isinstance(passes, list) or len(passes) != 2:
+    raise SystemExit(1)
+if any(
+    not isinstance(item, dict)
+    or item.get("model") == "gpt-5.6-sol"
+    or item.get("launch_model") == "gpt-5.6-sol"
+    for item in passes
+):
     raise SystemExit(1)
 if expected in {"balanced", "economy", "max_diversity"} and (
     passes[0].get("model") == passes[1].get("model")
@@ -1928,7 +1935,7 @@ elif [[ -n "$TAKEOVER_SELECTION" ]]; then
   fi
 fi
 if [[ "$CLAUDE_ORCHESTRATION_MODE" == opus_sol_council_v2 ]]; then
-  prompt="${prompt} For every new route round, use this exact two-seat protocol: first prepare Opus's private three-route slate; obtain Sol's blind slate with start_route_council, whose fixed roles are one strongest direct mechanism, one orthogonal mechanism that does not reuse its central technology, and one adversarial counterexample/obstruction route; have Opus merge them; then perform the one joint revision by obtaining Sol's keep/revise/replace recommendations with revise_route_council and having Opus adjudicate every recommendation exactly once into the final three routes; finally obtain Sol's non-editing ready/blocked audit with finalize_route_council. Sol's blind slate remains reference-blind for diversity, but the host gives declared complete reference candidates in full to the revision and audit seats and rejects any slate that drops their exact marker/path binding before a paid call. When statement_bound_retrieval_mode=matlas_arxiv, the isolated Sol seat receives only the statement-bound Matlas search, arXiv search, and cutoff-enforcing official arXiv reader, under a durable per-phase budget; it still receives no shell, workspace, general web, memory, or fanout tool. A blocked audit permits one structured Opus override or a stop, never a third edit dialogue: unchanged mode explicitly rejects every fatal finding and preserves audited bytes, while corrected mode submits the complete corrected slate and marks exactly its changed fatal routes corrected; prose alone never edits lane input. If the transcript does not establish the current council phase, call route_council_status once; then resume its exact durable phase without replaying an earlier paid call. Admit proof lanes only with the accepted council id and receipt SHA, and never reveal council transcripts to those lanes."
+  prompt="${prompt} For every new route round, use this exact two-seat protocol: first prepare Opus's private three-route slate; obtain Astra's blind slate with start_route_council, whose fixed roles are one strongest direct mechanism, one orthogonal mechanism that does not reuse its central technology, and one adversarial counterexample/obstruction route; have Opus merge them; then perform the one joint revision by obtaining Astra's keep/revise/replace recommendations with revise_route_council and having Opus adjudicate every recommendation exactly once into the final three routes; finally obtain Astra's non-editing ready/blocked audit with finalize_route_council. Astra's blind slate remains reference-blind for diversity, but the host gives declared complete reference candidates in full to the revision and audit seats and rejects any slate that drops their exact marker/path binding before a paid call. When statement_bound_retrieval_mode=matlas_arxiv, the isolated Astra seat receives only the statement-bound Matlas search, arXiv search, and cutoff-enforcing official arXiv reader, under a durable per-phase budget; it still receives no shell, workspace, general web, memory, or fanout tool. A blocked audit permits one structured Opus override or a stop, never a third edit dialogue: unchanged mode explicitly rejects every fatal finding and preserves audited bytes, while corrected mode submits the complete corrected slate and marks exactly its changed fatal routes corrected; prose alone never edits lane input. If the transcript does not establish the current council phase, call route_council_status once; then resume its exact durable phase without replaying an earlier paid call. Admit proof lanes only with the accepted council id and receipt SHA, and never reveal council transcripts to those lanes."
 fi
 if [[ "$CANARY_SELECTION" == 1 ]]; then
   if [[ "$CLAUDE_ORCHESTRATION_MODE" == opus_sol_council_v2 ]]; then

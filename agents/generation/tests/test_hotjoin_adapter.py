@@ -182,13 +182,13 @@ def _leased_adapter(
         _test_allow_unreleased_guardian=True,
     )
     adapter.lease = ledger.acquire_lease("run-1", adapter.owner_id)
-    adapter.requested_model = "gpt-5.6-sol"
+    adapter.requested_model = "gpt-6-astra"
     adapter.requested_effort = "max"
     adapter.turn_config = {
         "approvalPolicy": "never",
         "cwd": TEST_GENERATION_CWD,
         "effort": "max",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
         "sandbox": "workspace-write",
     }
     return adapter
@@ -221,7 +221,7 @@ def _thread_response(thread_id: str = "thread-1") -> dict[str, Any]:
     return {
         "approvalPolicy": "never",
         "cwd": TEST_GENERATION_CWD,
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
         "reasoningEffort": "max",
         "runtimeWorkspaceRoots": [],
         "sandbox": {
@@ -280,7 +280,7 @@ def _thread_params() -> dict[str, Any]:
         "approvalPolicy": "never",
         "config": {
             "agents": {
-                "default_subagent_model": "gpt-5.6-sol",
+                "default_subagent_model": "gpt-6-astra",
                 "default_subagent_reasoning_effort": "max",
             },
             "mcp_servers": _mcp_server_env_map(),
@@ -288,7 +288,7 @@ def _thread_params() -> dict[str, Any]:
         },
         "cwd": TEST_GENERATION_CWD,
         "ephemeral": False,
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
         "sandbox": "workspace-write",
     }
 
@@ -310,7 +310,7 @@ def _mcp_server_env_map(
 
 
 def _model_entry(
-    model: str = "gpt-5.6-sol", efforts: tuple[str, ...] = ("max",)
+    model: str = "gpt-6-astra", efforts: tuple[str, ...] = ("max",)
 ) -> dict[str, Any]:
     return {
         "id": model,
@@ -476,7 +476,7 @@ def _materialize_cadence_turn(
         client_message_id="bootstrap:initial",
         kind="bootstrap",
         prompt="solve",
-        config={"model": "gpt-5.6-sol", "effort": "max"},
+        config={"model": "gpt-6-astra", "effort": "max"},
         thread_id="thread-1",
         message_id=None,
         lease=lease,
@@ -514,7 +514,7 @@ def _materialize_legacy_stale_turn(
         client_message_id="bootstrap:legacy-stale",
         kind="bootstrap",
         prompt="legacy proof search",
-        config={"model": "gpt-5.6-sol", "effort": "max"},
+        config={"model": "gpt-6-astra", "effort": "max"},
         thread_id="thread-1",
         message_id=None,
         lease=lease,
@@ -669,7 +669,7 @@ def _resume_test_root_after_review(
         client_message_id=client_id,
         kind="bootstrap",
         prompt="test-only post-review root",
-        config={"model": "gpt-5.6-sol", "effort": "max"},
+        config={"model": "gpt-6-astra", "effort": "max"},
         thread_id="thread-1",
         message_id=None,
         lease=resumed_lease,
@@ -728,7 +728,7 @@ def _bind_continuation_capability(
     wall_epoch: float | None = None,
     monotonic_epoch: float | None = None,
     review_policy_sha256: str = hotjoin.REVIEW_CADENCE_POLICY_SHA256,
-    expected_model: str = "gpt-5.6-sol",
+    expected_model: str = "gpt-6-astra",
     reasoning_effort: str = "max",
 ) -> str:
     helper = Path(hotjoin.__file__).resolve()
@@ -1872,7 +1872,7 @@ def test_continuous_rootless_review_recovery_buys_only_the_verdict_successor(
     ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=due["review_id"],
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         lease=adapter._lease(),
     )
@@ -2393,7 +2393,7 @@ def test_continuous_review_verdict_follows_clean_physical_root_successor(
     ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=due["review_id"],
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         lease=adapter._lease(),
     )
@@ -2692,7 +2692,7 @@ def test_continuous_reviewer_failure_persists_sanitized_category(
     ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=due["review_id"],
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         lease=adapter._lease(),
     )
@@ -2786,7 +2786,7 @@ def test_continuous_completion_hint_requires_external_matching_receipt(
                         "pass_index": index,
                         "verification_attempt_id": "veratt_" + str(index) * 32,
                         "verifier_run_id": f"verifier-run-{index}",
-                        "verifier_model": "gpt-5.6-sol",
+                        "verifier_model": "gpt-6-astra",
                         "verifier_reasoning_effort": "max",
                         "verifier_service_version": "0.3.0",
                         "verification_role": (
@@ -3270,7 +3270,7 @@ def _v2_review_request(
     return build_review_request(
         review_id=review_id,
         snapshot=snapshot,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=hotjoin.REVIEW_CADENCE_POLICY_SHA256,
     )
@@ -3636,7 +3636,7 @@ def _prepare_control_review_runtime(
             client_message_id="bootstrap:review-control",
             kind="bootstrap",
             prompt="solve",
-            config={"model": "gpt-5.6-sol", "effort": "max"},
+            config={"model": "gpt-6-astra", "effort": "max"},
             thread_id="thread-1",
             message_id=None,
             lease=lease,
@@ -3717,7 +3717,7 @@ def _prepare_control_review_runtime(
         review_driver_path=str(driver),
         review_driver_sha256=driver_commitment["driver_sha256"],
         review_driver_package_sha256=driver_commitment["package_sha256"],
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         review_policy_sha256=hotjoin.REVIEW_CADENCE_POLICY_SHA256,
         codex_bin=str(fake_codex),
@@ -3905,7 +3905,7 @@ def test_guardian_runner_model_binding_comes_from_owner_capability() -> None:
     source = inspect.getsource(hotjoin._validate_released_runner_worker_command)
     assert 'options.get("--model") != run["expected_model"]' in source
     assert 'options.get("--effort") != run["reasoning_effort"]' in source
-    assert 'options.get("--model") != "gpt-5.6-sol"' not in source
+    assert 'options.get("--model") != "gpt-6-astra"' not in source
     assert 'options.get("--effort") != "max"' not in source
 
 
@@ -3952,7 +3952,7 @@ def test_unreleased_guardian_policy_forbids_every_paid_turn_start(
         "approvalPolicy": "never",
         "cwd": TEST_GENERATION_CWD,
         "effort": "max",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
         "sandbox": "workspace-write",
     }
     with pytest.raises(hotjoin.HotJoinError, match="unreleased_guardian_enforcement"):
@@ -5265,7 +5265,7 @@ def test_production_60m_policy_replays_three_lane_review_to_terminal(
         ledger.prepare_continuous_reviewer(
             "run-1",
             review_id=due["review_id"],
-            expected_model="gpt-5.6-sol",
+            expected_model="gpt-6-astra",
             reasoning_effort="max",
             lease=adapter._lease(),
         )
@@ -6126,7 +6126,7 @@ def test_continuous_reviewer_restart_opens_only_its_bounded_replacement_capacity
     ledger.prepare_continuous_reviewer(
         "run-1",
         review_id=due["review_id"],
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         lease=adapter._lease(),
     )
@@ -6950,7 +6950,7 @@ def _control_capability_bind_payload(
         "review_driver_path": str(review_driver),
         "review_driver_sha256": driver_commitment["driver_sha256"],
         "review_driver_package_sha256": driver_commitment["package_sha256"],
-        "expected_model": "gpt-5.6-sol",
+        "expected_model": "gpt-6-astra",
         "reasoning_effort": "max",
         "review_policy_sha256": hotjoin.REVIEW_CADENCE_POLICY_SHA256,
         "codex_bin": str(codex_bin),
@@ -7757,7 +7757,7 @@ def test_context_handoff_prepare_v2_is_host_derived_and_purpose_bound(
         contract_cli_path=str(helper),
         contract_cli_sha256=hashlib.sha256(helper.read_bytes()).hexdigest(),
         trusted_runtime_sha256="8" * 64,
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         review_policy_sha256=hotjoin.REVIEW_CADENCE_POLICY_SHA256,
         codex_bin=sys.executable,
@@ -10130,8 +10130,8 @@ def test_owner_review_drive_runs_one_real_targeted_verifier_and_never_retries(
                     "backend": {
                         "adapter": "codex_cli",
                         "provider": "openai",
-                        "model": "gpt-5.6-sol",
-                        "launch_model": "gpt-5.6-sol",
+                        "model": "gpt-6-astra",
+                        "launch_model": "gpt-6-astra",
                         "reasoning_effort": "max",
                     },
                     "prompt_limits": {
@@ -10286,8 +10286,8 @@ def _targeted_receipt(
             "backend": {
                 "adapter": "codex_cli",
                 "provider": "openai",
-                "model": "gpt-5.6-sol",
-                "launch_model": "gpt-5.6-sol",
+                "model": "gpt-6-astra",
+                "launch_model": "gpt-6-astra",
                 "reasoning_effort": "max",
             },
             "prompt_limits": {
@@ -13948,7 +13948,7 @@ def test_reasoning_agent_mcp_must_be_complete_and_required(
             mcp=mcp,
             shell_policy={"inherit": "none", "set": {"PATH": "/usr/bin"}},
             prompt="proof search",
-            model="gpt-5.6-sol",
+            model="gpt-6-astra",
             effort="max",
             max_runtime_seconds=1,
             idle_grace_seconds=0,
@@ -14041,7 +14041,7 @@ def test_reasoning_mcp_base_rejects_role_filters_and_short_timeout(
             mcp=base,
             shell_policy={"inherit": "none", "set": {"PATH": "/usr/bin"}},
             prompt="proof search",
-            model="gpt-5.6-sol",
+            model="gpt-6-astra",
             effort="max",
             max_runtime_seconds=1,
             idle_grace_seconds=0,
@@ -14070,7 +14070,7 @@ def test_reasoning_mcp_base_rejects_every_host_runtime_binding(
             mcp=base,
             shell_policy={"inherit": "none", "set": {"PATH": "/usr/bin"}},
             prompt="proof search",
-            model="gpt-5.6-sol",
+            model="gpt-6-astra",
             effort="max",
             max_runtime_seconds=1,
             idle_grace_seconds=0,
@@ -14411,7 +14411,7 @@ def test_generator_attests_exact_model_and_runtime_before_starting_turn(
         "approvalPolicy": "never",
         "cwd": TEST_GENERATION_CWD,
         "effort": "max",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
     }
     assert result["active_turn_id"] is None
     events = ledger.events("run-1", limit=1000)
@@ -15366,7 +15366,7 @@ def test_model_catalog_mismatch_fails_and_is_audited(
     adapter = _leased_adapter(ledger, rpc)
 
     with pytest.raises(hotjoin.HotJoinError, match=match):
-        adapter._attest_model_catalog("gpt-5.6-sol", "max")
+        adapter._attest_model_catalog("gpt-6-astra", "max")
 
     failure = [
         event
@@ -15385,7 +15385,7 @@ def test_model_catalog_audit_projects_away_untrusted_extra_fields(
     rpc.add("model/list", {"data": [model], "nextCursor": None})
     adapter = _leased_adapter(ledger, rpc)
 
-    adapter._attest_model_catalog("gpt-5.6-sol", "max")
+    adapter._attest_model_catalog("gpt-6-astra", "max")
 
     events = ledger.events("run-1", limit=1000)
     serialized = json.dumps(events, sort_keys=True)
@@ -15419,7 +15419,7 @@ def test_thread_resume_reapplies_config_and_rejects_runtime_model_mismatch(
         adapter._ensure_thread(_thread_params())
 
     resume_params = rpc.calls[-1][1]
-    assert resume_params["model"] == "gpt-5.6-sol"
+    assert resume_params["model"] == "gpt-6-astra"
     assert "allowProviderModelFallback" not in resume_params
     failure = [
         event
@@ -16047,7 +16047,7 @@ with Path(sys.argv[1]).open('a', encoding='utf-8') as stream:
         review_driver_path=str(driver),
         review_driver_sha256=driver_commitment["driver_sha256"],
         review_driver_package_sha256=driver_commitment["package_sha256"],
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         review_policy_sha256=private_policy_sha256,
         codex_bin=sys.executable,
@@ -21393,7 +21393,7 @@ def test_reasoning_epoch_token_never_exposes_master_and_old_call_loses_rotation(
                 "model_reasoning_effort": "max",
             },
             "cwd": TEST_GENERATION_CWD,
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6-astra",
             "sandbox": "workspace-write",
         }
     )
@@ -21703,7 +21703,7 @@ def test_thread_resume_disables_provider_fallback_when_schema_supports_it(
         "approvalPolicy": "never",
         "cwd": TEST_GENERATION_CWD,
         "effort": "max",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
         "sandbox": "workspace-write",
     }
     ledger.bind_thread("run-1", "thread-1", lease=adapter._lease())
@@ -21722,7 +21722,7 @@ def test_model_reroute_is_bound_to_active_turn_audited_and_fatal(
     adapter.active_turn_id = "turn-1"
     ledger.set_active_turn("run-1", "turn-1", lease=adapter._lease())
     reroute = {
-        "fromModel": "gpt-5.6-sol",
+        "fromModel": "gpt-6-astra",
         "reason": "highRiskCyberActivity",
         "threadId": "thread-1",
         "toModel": "gpt-other",
@@ -21769,7 +21769,7 @@ def test_unknown_model_reroute_reason_is_protocol_error_not_canonical_receipt(
             {
                 "method": "model/rerouted",
                 "params": {
-                    "fromModel": "gpt-5.6-sol",
+                    "fromModel": "gpt-6-astra",
                     "reason": "capacity",
                     "threadId": "thread-1",
                     "toModel": "gpt-other",
@@ -21794,7 +21794,7 @@ def test_model_reroute_rejects_extra_fields_without_persisting_them(
             {
                 "method": "model/rerouted",
                 "params": {
-                    "fromModel": "gpt-5.6-sol",
+                    "fromModel": "gpt-6-astra",
                     "reason": "highRiskCyberActivity",
                     "threadId": "thread-1",
                     "toModel": "gpt-other",
@@ -21916,7 +21916,7 @@ def test_resume_reapplies_generator_config_and_ignores_other_thread_events(
         },
         "cwd": TEST_GENERATION_CWD,
         "ephemeral": False,
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-astra",
         "sandbox": "workspace-write",
     }
 
@@ -22668,7 +22668,7 @@ adapter.turn_config = {
     "approvalPolicy": "never",
     "cwd": "/generation",
     "effort": "max",
-    "model": "gpt-5.6-sol",
+    "model": "gpt-6-astra",
     "sandbox": "workspace-write",
 }
 
@@ -23174,7 +23174,7 @@ def test_stale_turn_reconcile_real_subprocess_is_zero_model_under_release_gate(
         review_driver_path=str(driver),
         review_driver_sha256=driver_commitment["driver_sha256"],
         review_driver_package_sha256=driver_commitment["package_sha256"],
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         review_policy_sha256=hotjoin.REVIEW_CADENCE_POLICY_SHA256,
         codex_bin=str(fake_codex),
@@ -24871,7 +24871,7 @@ def _released_runner_worker_command(
     ledger: hotjoin.ConversationLedger,
     *,
     web_mode: str,
-    model: str = "gpt-5.6-sol",
+    model: str = "gpt-6-astra",
     effort: str = "max",
 ) -> tuple[list[str], Path, Path, str]:
     with ledger._connect() as connection:
@@ -25160,7 +25160,7 @@ You may use local read-only shell/Python for the `q=7` arithmetic. Do not use th
         "--disable",
         "external_agent_memory_import",
         "--model",
-        "gpt-5.6-sol",
+        "gpt-6-astra",
         "--config",
         'model_reasoning_effort="max"',
         "--config",

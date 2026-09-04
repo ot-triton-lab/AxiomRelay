@@ -90,9 +90,7 @@ TARGETED_CONTROL_ROOT = WORK_DIR.parent / ".rethlas_verifier_control"
 CODEX_BIN = os.getenv("CODEX_BIN", "codex")
 CLAUDE_BIN = os.getenv("VERIFY_CLAUDE_BIN", "claude")
 VERIFIER_PROFILE = os.getenv("RETHLAS_MODEL_POLICY_PROFILE", "compatible")
-CODEX_MODEL = os.getenv(
-    "CODEX_MODEL", "gpt-6-astra" if VERIFIER_PROFILE == "max_diversity" else "gpt-5.6-sol"
-)
+CODEX_MODEL = os.getenv("CODEX_MODEL", "gpt-6-astra")
 CODEX_REASONING_EFFORT = os.getenv(
     "CODEX_REASONING_EFFORT",
     "max" if VERIFIER_PROFILE == "max_diversity" else "xhigh",
@@ -280,11 +278,24 @@ def _configured_verifier_backends() -> dict[int, VerifierBackend]:
         1: _validate_backend(primary, label="primary"),
         2: _validate_backend(adversarial, label="adversarial"),
     }
+    for backend in backends.values():
+        _require_current_verifier_model(backend)
     if profile != "compatible" and backends[1].model == backends[2].model:
         raise RuntimeError("selected verifier profile requires distinct models")
     if profile == "max_diversity" and backends[1].provider == backends[2].provider:
         raise RuntimeError("max_diversity requires distinct verifier providers")
     return backends
+
+
+def _require_current_verifier_model(backend: VerifierBackend) -> None:
+    """Reject retired model overrides at dispatch, not historical parsing."""
+
+    if backend.adapter == "codex_cli" and "gpt-5.6-sol" in {
+        backend.model, backend.command_model
+    }:
+        raise RuntimeError(
+            "gpt-5.6-sol is historical only; use gpt-6-astra for new verification"
+        )
 
 
 VERIFIER_BACKENDS = _configured_verifier_backends()
@@ -1195,6 +1206,7 @@ def build_codex_command(
     backend = backend or VERIFIER_BACKENDS[1]
     if backend.adapter != "codex_cli":
         raise ValueError("Codex command requires a codex_cli backend")
+    _require_current_verifier_model(backend)
     resolved_schema_path = schema_path or (
         REPO_ROOT / "schemas" / "verification_output.schema.json"
     )

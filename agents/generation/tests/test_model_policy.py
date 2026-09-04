@@ -44,20 +44,20 @@ def schema_validator() -> Draft202012Validator:
     [
         (
             "compatible",
-            "gpt-5.6-sol",
-            ["gpt-5.6-sol", "gpt-5.6-sol"],
+            "gpt-6-astra",
+            ["gpt-6-astra", "gpt-6-astra"],
             False,
         ),
         (
             "balanced",
-            "gpt-5.6-sol",
-            ["gpt-5.6-sol", "gpt-5.6-terra"],
+            "gpt-6-astra",
+            ["gpt-6-astra", "gpt-5.6-terra"],
             True,
         ),
         (
             "economy",
             "gpt-5.6-terra",
-            ["gpt-5.6-sol", "gpt-5.6-terra"],
+            ["gpt-6-astra", "gpt-5.6-terra"],
             True,
         ),
     ],
@@ -124,8 +124,45 @@ def test_max_diversity_resolves_when_cold_claude_verifier_is_attested(
 
 def test_distinct_model_contract_rejects_same_model() -> None:
     policy = _resolve("balanced")
-    policy["verifier"]["passes"][1]["model"] = "gpt-5.6-sol"
+    policy["verifier"]["passes"][1]["model"] = "gpt-6-astra"
     with pytest.raises(model_policy.ModelPolicyError, match="distinct models"):
+        model_policy.validate_policy(policy)
+
+
+def test_new_policy_cannot_dispatch_retired_sol_model() -> None:
+    assert all(item.model != "gpt-5.6-sol" for item in model_policy.CAPABILITIES)
+    policy = _resolve("compatible")
+    policy["generator"]["model"] = "gpt-5.6-sol"
+    with pytest.raises(model_policy.ModelPolicyError, match="no capability"):
+        model_policy.validate_policy(policy)
+
+
+def test_reviewed_generator_rejects_retired_model_before_io() -> None:
+    from types import SimpleNamespace
+    from agents import hotjoin_adapter
+
+    with pytest.raises(ValueError, match="historical only"):
+        hotjoin_adapter._run_generator_command(SimpleNamespace(model="gpt-5.6-sol"))
+
+
+def test_reviewed_reviewer_rejects_retired_model_before_io() -> None:
+    from agents import hotjoin_adapter
+
+    with pytest.raises(hotjoin_adapter.HotJoinError, match="retired_model_requires_new_epoch"):
+        hotjoin_adapter._launch_continuous_reviewer_request(
+            {"expected_model": "gpt-5.6-sol"},
+            codex_bin="/must-not-be-opened",
+            codex_bin_sha256="a" * 64,
+            timeout_seconds=1,
+            require_guardian_group=False,
+        )
+
+
+@pytest.mark.parametrize("effort", ["none", "minimal", "ultra"])
+def test_astra_rejects_unsupported_reasoning_effort(effort: str) -> None:
+    policy = _resolve("compatible")
+    policy["generator"]["effort"] = effort
+    with pytest.raises(model_policy.ModelPolicyError, match="no capability"):
         model_policy.validate_policy(policy)
 
 
@@ -139,7 +176,7 @@ def test_planned_persistent_codex_root_is_not_exposed() -> None:
             profile="balanced",
             root_adapter="codex_cli",
             root_provider="openai",
-            root_model="gpt-5.6-sol",
+            root_model="gpt-6-astra",
             root_effort="max",
         )
 

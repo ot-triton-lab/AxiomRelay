@@ -465,7 +465,7 @@ APPROVED_GUARDIAN_LAUNCHER_SHA256 = (
     "67e53f9c8bd4784601453c67c88ec5e5fa9eadad549db10626e94c6606283140"
 )
 APPROVED_GUARDIAN_RUNNER_SHA256 = (
-    "a3fa9bf30a0748072e23af3b42cc56935ee004fa672bffc08a5716acdfe57d68"
+    "264765e5c5cbbfeb11940596acf79108a8baa791f191a1677eea1c6c4436456d"
 )
 APPROVED_GUARDIAN_SHA256 = (
     "835686243b14588ebbec8cec09edc43579fc7368c697281ef31083fc14cf8760"
@@ -1180,6 +1180,14 @@ _MAX_TELEMETRY_ITEM_ID_BYTES = 4096
 
 class HotJoinError(RuntimeError):
     """Base class for adapter failures."""
+
+
+def _require_current_model_dispatch(model: object) -> None:
+    if model == "gpt-5.6-sol":
+        raise HotJoinError(
+            "retired_model_requires_new_epoch: gpt-5.6-sol cannot start new work; "
+            "use gpt-6-astra"
+        )
 
 
 class CapabilityError(HotJoinError):
@@ -34167,6 +34175,7 @@ class GeneratorHotJoin:
                 )
                 fresh_params["threadSource"] = thread_source
                 fresh_params["serviceName"] = "rethlas-hotjoin"
+                _require_current_model_dispatch(fresh_params.get("model"))
                 intent = self.ledger.prepare_fresh_thread_start(
                     self.run_id,
                     handoff_id=str(rollover["handoff_id"]),
@@ -34328,6 +34337,7 @@ class GeneratorHotJoin:
         thread_source = self.ledger.initial_thread_source_marker(self.run_id)
         initial_params["threadSource"] = thread_source
         initial_params["serviceName"] = "rethlas-hotjoin"
+        _require_current_model_dispatch(initial_params.get("model"))
         intent = self.ledger.prepare_initial_thread_start(
             self.run_id,
             thread_source=thread_source,
@@ -34512,6 +34522,7 @@ class GeneratorHotJoin:
             raise HotJoinError("unreleased_guardian_enforcement")
         if self.turn_config is None:
             raise HotJoinError("generator turn configuration was not attested")
+        _require_current_model_dispatch(self.turn_config.get("model"))
         next_cycle_handoff = (
             self.pending_handoff_binding
             if self.pending_handoff_binding is not None
@@ -42982,6 +42993,7 @@ def _launch_route_reviewer(
             or invocation["reasoning_effort"] != capability["reasoning_effort"]
         ):
             raise HotJoinError("review invocation differs from its durable binding")
+        _require_current_model_dispatch(invocation["model"])
         executable_source = _resolve_reviewer_executable(capability["codex_bin"])
         executable_commitment = str(capability.get("codex_bin_sha256") or "")
     except (HotJoinError, OSError, ValueError) as exc:
@@ -43273,6 +43285,7 @@ def _launch_continuous_reviewer_request(
 ) -> dict[str, Any]:
     """Run one fresh tool-free comparative cohort reviewer."""
 
+    _require_current_model_dispatch(request.get("expected_model"))
     snapshot = request.get("snapshot")
     if not isinstance(snapshot, dict):
         raise HotJoinError("continuous reviewer request omitted its snapshot")
@@ -44596,7 +44609,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--problem-id", required=True)
     run_parser.add_argument("--cwd", type=Path, required=True)
     run_parser.add_argument("--prompt", required=True)
-    run_parser.add_argument("--model", default="gpt-5.6-sol")
+    run_parser.add_argument("--model", default="gpt-6-astra")
     run_parser.add_argument("--effort", default="max")
     run_parser.add_argument("--web-mode", choices=("live", "disabled"), default="live")
     run_parser.add_argument("--mcp-config-toml", required=True)
@@ -44641,6 +44654,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _run_generator_command(args: argparse.Namespace) -> dict[str, Any]:
+    if args.model == "gpt-5.6-sol":
+        raise ValueError("gpt-5.6-sol is historical only; use gpt-6-astra for new runs")
     # Capability and config validation deliberately precede creating the run or
     # starting app-server. A known incompatible CLI therefore costs no model
     # tokens and leaves no misleading durable run receipt.
@@ -45115,6 +45130,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     database_guard: _DatabaseLifecycleGuard | None = None
     try:
+        if args.command == "run-generator" and args.model == "gpt-5.6-sol":
+            raise ValueError(
+                "gpt-5.6-sol is historical only; use gpt-6-astra for new runs"
+            )
         if args.command == "policy-contract":
             if (
                 args.control_token_fd is not None

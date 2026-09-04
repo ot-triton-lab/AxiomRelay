@@ -245,7 +245,7 @@ def test_prepare_sends_one_canonical_digest_bound_request_on_stdin_contract(
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=snapshot(),
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
@@ -262,7 +262,7 @@ def test_prepare_sends_one_canonical_digest_bound_request_on_stdin_contract(
     assert envelope["command"] == "review_prepare"
     request = envelope["payload"]["request"]
     assert critic.validate_review_request(request) == request
-    assert request["expected_model"] == "gpt-5.6-sol"
+    assert request["expected_model"] == "gpt-6-astra"
     assert request["reasoning_effort"] == "max"
     assert request["reviewer_contract"]["tools"] == []
     assert request["retry_allowed"] is False
@@ -311,8 +311,8 @@ def test_targeted_wrong_commit_requires_and_sends_exact_transition_receipt(
             "backend": {
                 "adapter": "codex_cli",
                 "provider": "openai",
-                "model": "gpt-5.6-sol",
-                "launch_model": "gpt-5.6-sol",
+                "model": "gpt-6-astra",
+                "launch_model": "gpt-6-astra",
                 "reasoning_effort": "max",
             },
             "prompt_limits": {
@@ -377,7 +377,7 @@ def test_targeted_wrong_commit_requires_and_sends_exact_transition_receipt(
         request = critic.build_review_request(
             review_id=REVIEW_ID,
             snapshot=snapshot(),
-            expected_model="gpt-5.6-sol",
+            expected_model="gpt-6-astra",
             reasoning_effort="max",
             policy_sha256=POLICY_SHA,
         )
@@ -738,7 +738,7 @@ def test_review_memory_is_explicitly_control_only_not_mathematical_evidence() ->
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=snapshot(),
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
@@ -766,7 +766,7 @@ def test_wait_accepts_execution_unknown_without_retry_or_verdict(
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=snapshot(),
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
@@ -807,7 +807,7 @@ def test_completed_status_requires_host_derived_consistent_decision(
     request = critic.build_review_request(
         review_id=REVIEW_ID,
         snapshot=snapshot(),
-        expected_model="gpt-5.6-sol",
+        expected_model="gpt-6-astra",
         reasoning_effort="max",
         policy_sha256=POLICY_SHA,
     )
@@ -3168,7 +3168,7 @@ def test_minute120_cutoff_survives_later_targeted_review_supersession(
     )
     monkeypatch.setenv("RETHLAS_EXPECTED_PROBLEM_ID", "frontier/example")
     monkeypatch.setenv("RETHLAS_EXPECTED_HOTJOIN_RUN_ID", "run-1")
-    monkeypatch.setenv("RETHLAS_REVIEW_EXPECTED_MODEL", "gpt-5.6-sol")
+    monkeypatch.setenv("RETHLAS_REVIEW_EXPECTED_MODEL", "gpt-6-astra")
     monkeypatch.setenv("RETHLAS_REVIEW_EXPECTED_REASONING_EFFORT", "max")
     monkeypatch.setenv("RETHLAS_REVIEW_POLICY_SHA256", POLICY_SHA)
 

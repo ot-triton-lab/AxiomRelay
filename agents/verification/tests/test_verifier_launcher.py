@@ -181,9 +181,9 @@ def test_remote_verifier_accepts_tls_and_random_256_bit_token(
 @pytest.mark.parametrize(
     ("profile", "expected_primary", "expected_adversarial"),
     [
-        ("compatible", "gpt-5.6-sol/xhigh", "gpt-5.6-sol/xhigh"),
-        ("balanced", "gpt-5.6-sol/xhigh", "gpt-5.6-terra/max"),
-        ("economy", "gpt-5.6-sol/xhigh", "gpt-5.6-terra/max"),
+        ("compatible", "gpt-6-astra/xhigh", "gpt-6-astra/xhigh"),
+        ("balanced", "gpt-6-astra/xhigh", "gpt-5.6-terra/max"),
+        ("economy", "gpt-6-astra/xhigh", "gpt-5.6-terra/max"),
         (
             "max_diversity",
             "gpt-6-astra/max",

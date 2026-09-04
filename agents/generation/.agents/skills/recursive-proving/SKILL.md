@@ -265,7 +265,7 @@ with active `failed_paths` record ids, the boundary checklist, and the exact
 question. Do not submit or invent a source-context digest: the host computes it
 from the statement, cited records, and ledger head and builds the returned
 `copy_paste_prompt`. A repeated `gap_id` is write-once; changed evidence
-requires a new id. In the reviewed/GPT-Sol runtime, these tools are intentionally
+requires a new id. In the reviewed/GPT-Astra runtime, these tools are intentionally
 absent: persist and return the exact gap evidence to the canonical root instead
 of pretending that the query was prepared.
 

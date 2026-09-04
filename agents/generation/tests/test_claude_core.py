@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 import jsonschema
@@ -4357,9 +4357,9 @@ def test_source_drift_migration_reconciles_only_definite_finalizations(
     assert verifier_calls == calls_before_migration
 
 
-def test_source_drift_fence_accepts_historical_phase_schema_by_hash_chain(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _historical_council_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, model: str
+) -> dict[str, Any]:
     monkeypatch.setattr(claude_core, "STATE_ROOT", tmp_path / "state")
     phase = "revision"
     problem_id = "example"
@@ -4420,7 +4420,7 @@ def test_source_drift_fence_accepts_historical_phase_schema_by_hash_chain(
             "statement_sha256": statement_sha256,
             "root_session_id": root_session_id,
             "request_sha256": request_sha256,
-            "model": claude_core.COUNCIL_CODEX_MODEL,
+            "model": model,
             "reasoning_effort": "max",
             "retrieval_profile_sha256": retrieval_profile_sha256,
             "retrieval_capability": retrieval_profile["capability"],
@@ -4456,18 +4456,187 @@ def test_source_drift_fence_accepts_historical_phase_schema_by_hash_chain(
         "root_session_id": root_session_id,
         "host_source_sha256": host_source_sha256,
     }
+    return {
+        "state_dir": state_dir,
+        "pointer": pointer,
+        "schema_path": schema_path,
+        "historical_schema": historical_schema,
+        "intent_path": intent_path,
+        "validator_args": {
+            **pointer,
+            "phase": phase,
+            "request_sha256": request_sha256,
+            "retrieval_profile": retrieval_profile,
+            "retrieval_profile_sha256": retrieval_profile_sha256,
+            "output_schema_sha256": output_schema_sha256,
+        },
+    }
+
+
+@pytest.mark.parametrize("historical_model", ["gpt-5.6-sol", "gpt-6-astra"])
+def test_source_drift_fence_accepts_historical_phase_schema_by_hash_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, historical_model: str
+) -> None:
+    case = _historical_council_phase(tmp_path, monkeypatch, model=historical_model)
+    state_dir = case["state_dir"]
+    pointer = case["pointer"]
+    phase = case["validator_args"]["phase"]
+    before = {path: path.read_bytes() for path in state_dir.iterdir()}
     claude_core._fence_source_drift_phase_dispatches(
         state_dir=state_dir, pointer=pointer
     )
     execution_path = state_dir / f"{phase}_execution.json"
     assert execution_path.is_file()
+    assert json.loads(execution_path.read_bytes())["execution"]["retry_allowed"] is False
+    assert all(path.read_bytes() == raw for path, raw in before.items())
 
     claude_core._replace_canonical(
-        schema_path, {**historical_schema, "required": ["changed"]}
+        case["schema_path"], {**case["historical_schema"], "required": ["changed"]}
     )
     with pytest.raises(claude_core.ClaudeCoreError, match="intent collision"):
         claude_core._fence_source_drift_phase_dispatches(
             state_dir=state_dir, pointer=pointer
+        )
+
+
+def _add_historical_council_receipt(case: dict[str, Any]) -> Path:
+    args = case["validator_args"]
+    intent = json.loads(case["intent_path"].read_bytes())
+    report = {"legacy": "Historical report retained without paid replay."}
+    execution = {"status": "completed", "retry_allowed": False}
+    path = case["state_dir"] / f"{args['phase']}_receipt.json"
+    receipt = {
+        "schema_version": claude_core.COUNCIL_PHASE_RECEIPT_SCHEMA,
+        "status": "completed",
+        **case["pointer"],
+        "phase": args["phase"],
+        "request_sha256": args["request_sha256"],
+        "model": intent["model"],
+        "reasoning_effort": "max",
+        "retrieval_profile": args["retrieval_profile"],
+        "retrieval_profile_sha256": args["retrieval_profile_sha256"],
+        "output_schema_sha256": args["output_schema_sha256"],
+        "report": report,
+        "report_sha256": hashlib.sha256(
+            (claude_core.canonical_json(report) + "\n").encode()
+        ).hexdigest(),
+        "execution": execution,
+        "retry_allowed": False,
+        "settled_at_unix": 1.0,
+    }
+    claude_core._write_once(path, receipt, mode=0o400)
+    claude_core._persist_council_phase_execution(
+        path=case["state_dir"] / f"{args['phase']}_execution.json",
+        execution={**execution, "report": report},
+        **{
+            key: value
+            for key, value in args.items()
+            if key not in {"retrieval_profile", "retrieval_profile_sha256"}
+        },
+    )
+    return path
+
+
+@pytest.mark.parametrize("historical_model", ["gpt-5.6-sol", "gpt-6-astra"])
+def test_source_drift_preserves_completed_historical_model_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, historical_model: str
+) -> None:
+    case = _historical_council_phase(tmp_path, monkeypatch, model=historical_model)
+    receipt_path = _add_historical_council_receipt(case)
+    before = {path: path.read_bytes() for path in case["state_dir"].iterdir()}
+
+    def forbidden_dispatch(**_kwargs: Any) -> None:
+        raise AssertionError("Historical authentication must not dispatch a model")
+
+    monkeypatch.setattr(claude_core, "_invoke_sol_council", forbidden_dispatch)
+    for _ in range(2):
+        claude_core._fence_source_drift_phase_dispatches(
+            state_dir=case["state_dir"], pointer=case["pointer"]
+        )
+    assert json.loads(receipt_path.read_bytes())["model"] == historical_model
+    assert {path: path.read_bytes() for path in case["state_dir"].iterdir()} == before
+
+
+def test_current_council_intent_rejects_historical_sol_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _historical_council_phase(tmp_path, monkeypatch, model="gpt-5.6-sol")
+    with pytest.raises(claude_core.ClaudeCoreError, match="intent collision"):
+        claude_core._validate_council_phase_intent(
+            case["intent_path"], **case["validator_args"]
+        )
+
+
+def test_current_council_receipt_rejects_historical_sol_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _historical_council_phase(tmp_path, monkeypatch, model="gpt-5.6-sol")
+    path = _add_historical_council_receipt(case)
+    args = case["validator_args"]
+    # Isolate model admission from the separately strict source/profile gates.
+    monkeypatch.setattr(
+        claude_core, "_loaded_host_source_sha256", lambda: args["host_source_sha256"]
+    )
+    monkeypatch.setattr(
+        claude_core, "_council_retrieval_profile", lambda **_kwargs: args["retrieval_profile"]
+    )
+    with pytest.raises(claude_core.ClaudeCoreError, match="receipt binding mismatch"):
+        claude_core._read_council_phase_receipt(
+            path,
+            **{
+                key: value
+                for key, value in args.items()
+                if key not in {
+                    "host_source_sha256", "output_schema_sha256",
+                    "retrieval_profile", "retrieval_profile_sha256",
+                }
+            },
+        )
+
+
+def test_source_drift_rejects_relabelled_intent_after_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _historical_council_phase(tmp_path, monkeypatch, model="gpt-5.6-sol")
+    intent = json.loads(case["intent_path"].read_bytes())
+    claude_core._replace_canonical(
+        case["intent_path"], {**intent, "model": "gpt-6-astra"}
+    )
+    with pytest.raises(claude_core.ClaudeCoreError, match="dispatch.*mismatch"):
+        claude_core._fence_source_drift_phase_dispatches(
+            state_dir=case["state_dir"], pointer=case["pointer"]
+        )
+    assert not (case["state_dir"] / "revision_execution.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("model", "gpt-6-astra"),
+        ("host_source_sha256", "c" * 64),
+        ("report_sha256", "d" * 64),
+    ],
+)
+def test_source_drift_rejects_tampered_historical_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, replacement: str
+) -> None:
+    case = _historical_council_phase(tmp_path, monkeypatch, model="gpt-5.6-sol")
+    path = _add_historical_council_receipt(case)
+    receipt = json.loads(path.read_bytes())
+    claude_core._replace_canonical(path, {**receipt, field: replacement})
+    with pytest.raises(claude_core.ClaudeCoreError, match="mismatch"):
+        claude_core._fence_source_drift_phase_dispatches(
+            state_dir=case["state_dir"], pointer=case["pointer"]
+        )
+
+
+def test_source_drift_rejects_unknown_historical_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _historical_council_phase(tmp_path, monkeypatch, model="unapproved-model")
+    with pytest.raises(claude_core.ClaudeCoreError, match="model is unsupported"):
+        claude_core._fence_source_drift_phase_dispatches(
+            state_dir=case["state_dir"], pointer=case["pointer"]
         )
 
 
@@ -5277,8 +5446,8 @@ def test_opus_sol_council_runs_one_joint_revision_before_exact_cohort_admission(
         {
             **plan,
             "plan_id": f"sol_route_{index}",
-            "mechanism": f"independent Sol mechanism {index}",
-            "scope": f"independent Sol scope {index}",
+            "mechanism": f"independent Astra mechanism {index}",
+            "scope": f"independent Astra scope {index}",
         }
         for index, plan in enumerate(_plans(), start=1)
     ]
@@ -5432,7 +5601,7 @@ def test_opus_sol_council_runs_one_joint_revision_before_exact_cohort_admission(
             "draft_plan_id": plan["plan_id"],
             "final_plan_id": plan["plan_id"],
             "decision": "accepted",
-            "rationale": "Opus accepts Sol's keep recommendation after review.",
+            "rationale": "Opus accepts Astra's keep recommendation after review.",
         }
         for plan in merged_plans
     ]
@@ -8218,7 +8387,7 @@ def test_digest_bound_real_runner_preserves_its_authenticated_source_root() -> N
     environment.update(
         {
             "RETHLAS_RUN_MODE": "core",
-            "RETHLAS_MAIN_AGENT": "gpt-sol",
+            "RETHLAS_MAIN_AGENT": "gpt-astra",
             "RETHLAS_MODEL_POLICY_PROFILE": "max_diversity",
             "RETHLAS_GENERATION_PYTHON_BIN": str(python_bin),
             "RETHLAS_COHORT_RUNNER_CLOSURE_SHA256": (
@@ -8795,7 +8964,7 @@ def test_council_contract_preflight_is_actionable_and_non_paid() -> None:
     assert result["category"] == "route_council_contract"
     assert result["retry_allowed"] is True
     assert result["paid_sol_dispatched"] is False
-    assert "only the single Sol replace slot" in result["repair_hint"]
+    assert "only the single Astra replace slot" in result["repair_hint"]
 
 
 def test_cohort_contract_preflight_is_structured_before_intent() -> None:
@@ -13762,7 +13931,7 @@ def test_publication_v4_replays_persisted_limits_with_frozen_parser(
             "pass_index": index,
             "verification_attempt_id": "veratt_" + str(index) * 32,
             "verifier_run_id": f"run-{index}",
-            "verifier_model": "gpt-5.6-sol",
+            "verifier_model": "gpt-6-astra",
             "verifier_reasoning_effort": "max",
             "verifier_service_version": "0.3.0",
             "verification_role": (
@@ -15130,7 +15299,7 @@ def test_immutable_amendment_supersedes_exact_parent_receipt(
             "pass_index": index,
             "verification_attempt_id": f"veratt_{index}".ljust(39, str(index)),
             "verifier_run_id": f"run-{index}",
-            "verifier_model": "gpt-5.6-sol",
+            "verifier_model": "gpt-6-astra",
             "verifier_reasoning_effort": "max",
             "verifier_service_version": "0.3.0",
             "verification_role": (
@@ -16276,7 +16445,7 @@ def test_council_root_mcp_exposes_the_bounded_two_seat_protocol_only_in_mode(
         **_arguments: object,
     ) -> dict[str, object]:
         raise claude_core.CouncilContractError(
-            "route-council revision is out of sequence; the blind Sol phase "
+            "route-council revision is out of sequence; the blind Astra phase "
             "must complete before a merged slate can be reviewed"
         )
 
@@ -16297,7 +16466,7 @@ def test_council_root_mcp_exposes_the_bounded_two_seat_protocol_only_in_mode(
     assert revision_preflight["status"] == "preflight_failed"
     assert revision_preflight["category"] == "route_council_contract"
     assert revision_preflight["operation"] == "revise_route_council"
-    assert "blind Sol phase must complete" in revision_preflight["error"]
+    assert "blind Astra phase must complete" in revision_preflight["error"]
     item_type = get_args(tools["memory_append_batch"].fn.__annotations__["items"])[0]
     item = item_type(
         channel="events",

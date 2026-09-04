@@ -2006,8 +2006,8 @@ class MemoryContextTests(unittest.TestCase):
                     "pass_index": index,
                     "adapter": "codex_cli",
                     "provider": "openai",
-                    "model": "gpt-5.6-sol",
-                    "launch_model": "gpt-5.6-sol",
+                    "model": "gpt-6-astra",
+                    "launch_model": "gpt-6-astra",
                     "reasoning_effort": "xhigh",
                     "session_mode": "cold",
                 }

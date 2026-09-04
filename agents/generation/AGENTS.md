@@ -63,7 +63,7 @@ gmpy2 in addition to the reasoning MCP dependencies. Use it for numerical
 experiments, symbolic checks, and exact arithmetic when useful, but treat
 computational evidence as evidence rather than a proof.
 
-GPT-Sol proof lanes receive that runtime through their restricted shell. A
+GPT-Astra proof lanes receive that runtime through their restricted shell. A
 persistent Claude root has no shell, but may call the host-owned
 `run_math_experiment` tool before freezing its route slate or for one concrete
 local repair test. The tool runs only inline Python in an empty Codex sandbox,
@@ -71,7 +71,7 @@ denies the repository and user home, disables network access, caps code,
 runtime, and output, and saves a private write-once receipt. It never grants
 workspace access and its result is `unverified_computational_diagnostic`, not a
 proof step, route checkpoint, admission receipt, or publication authority.
-The isolated Sol council seat still has no Python or shell.
+The isolated Astra council seat still has no Python or shell.
 
 ## Human hot-join turns
 
@@ -96,7 +96,7 @@ authorization, or turn an ordinary stuck/cost-gated state into an advisor job.
 Only the owner-side durable broker may announce an `advisor_available` notice;
 a manually pasted answer must instead use the digest-bound gap-delta tools.
 Those four gap-delta tools belong to the canonical Claude-root runtime governed
-by `CLAUDE.md`; they are intentionally not exposed by this reviewed/GPT-Sol
+by `CLAUDE.md`; they are intentionally not exposed by this reviewed/GPT-Astra
 MCP server. A lane that isolates such a gap records the exact active
 `failed_paths`, target, and boundary checks and hands them to the canonical
 root. It must not pretend to call `prepare_pro_gap_query` or manufacture a
@@ -307,30 +307,30 @@ authority. Each retrieval reservation is durably bound to the immutable phase
 intent and consumes its budget even on provider failure. Search output remains
 a lead, not proof authority. The seat is not a native collaboration spawn or
 proof lane and therefore does not consume one of the three proof-lane slots.
-Opus and Sol first prepare independent blind three-route
-slates; Sol never receives Opus's slate in that phase. Sol's fresh wire schema
+Opus and Astra first prepare independent blind three-route
+slates; Astra never receives Opus's slate in that phase. Astra's fresh wire schema
 has fixed `primary_mechanism`, `orthogonal_mechanism`, and
 `adversarial_mechanism` slots with fixed plan ids and explicit separation
 claims. The orthogonal slot cannot reuse the same central lemma or technology;
 the adversarial slot attacks the assertion through counterexamples,
 obstructions, or sharp stress tests. Host normalization rejects diversity that
 differs only by Unicode compatibility forms, case, or punctuation. Declared
-complete reference candidates remain hidden from blind Sol so that this
+complete reference candidates remain hidden from blind Astra so that this
 diversity check stays independent. Before that paid blind call, however, the
 host requires Opus to reserve one exact marker-and-path-bound audit route for
 each declared candidate. The one revision seat and final audit seat receive
 the immutable candidate text and exact route bindings; they must stress-test
 that candidate or identify its first fatal mathematical defect, never silently
 replace it with an unrelated route. Opus then produces one
-merged slate. In the second and only editing dialogue, Sol gives one exact
+merged slate. In the second and only editing dialogue, Astra gives one exact
 keep/revise/replace review for every merged route and Opus adjudicates every
-review exactly once into the final three routes. Sol then performs one
+review exactly once into the final three routes. Astra then performs one
 non-editing `ready`/`blocked` audit. A blocked audit permits either a structured
 Opus override or a truthful stop, not a third editing dialogue. The override
 must explicitly reject each fatal finding while retaining the audited bytes,
 or seal a complete content-addressed corrected slate whose changed routes are
 exactly those fatal routes marked corrected; free text alone cannot modify the
-fanout plan. The Sol wire schema keys every review and finding by the exact three
+fanout plan. The Astra wire schema keys every review and finding by the exact three
 route ids bound in that phase and repeats the matching id inside each value;
 the host then normalizes durable arrays into slate order. Opus adjudications
 also bind by stable route id, never incidental array position. Phase schemas,
