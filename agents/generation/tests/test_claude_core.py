@@ -6569,6 +6569,175 @@ def test_pro_gap_query_requires_two_distinct_failures(
         )
 
 
+def test_root_math_experiment_is_bounded_write_once_and_receipted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generation_root = tmp_path / "generation"
+    data_root = generation_root / "data"
+    data_root.mkdir(parents=True)
+    statement = data_root / "example.md"
+    statement.write_text("Investigate the finite model.\n", encoding="utf-8")
+    statement_sha256 = hashlib.sha256(statement.read_bytes()).hexdigest()
+    calls_path = tmp_path / "sandbox-calls.jsonl"
+    fake_codex = tmp_path / "fake-codex"
+    fake_codex.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys\n"
+        f"calls = pathlib.Path({str(calls_path)!r})\n"
+        "with calls.open('a', encoding='utf-8') as handle:\n"
+        "    handle.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "separator = sys.argv.index('--')\n"
+        "command = sys.argv[separator + 1:]\n"
+        "os.execv(command[0], command)\n",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    python_bin = Path(sys.executable).resolve(strict=True)
+    python_sha256 = hashlib.sha256(python_bin.read_bytes()).hexdigest()
+    host_source_sha256 = claude_core._host_source_sha256()
+    monkeypatch.setattr(claude_core, "GENERATION_ROOT", generation_root)
+    monkeypatch.setattr(claude_core, "STATE_ROOT", tmp_path / "state")
+    monkeypatch.setattr(claude_core, "PYTHON_BIN", python_bin)
+
+    arguments = {
+        "problem_id": "example",
+        "statement_sha256": statement_sha256,
+        "root_session_id": "12345678-1234-4123-8123-123456789abc",
+        "experiment_id": "exp_sum_check",
+        "purpose": "Check one exact arithmetic identity before route design.",
+        "code": "import numpy as np\nprint(int(np.array([19, 23]).sum()))",
+        "timeout_seconds": 10,
+        "codex_bin": fake_codex,
+        "expected_python_runtime_sha256": python_sha256,
+        "expected_host_source_sha256": host_source_sha256,
+    }
+    created = claude_core.run_math_experiment(**arguments)
+    assert created["status"] == "created"
+    assert created["execution"]["execution_status"] == "completed"
+    assert created["execution"]["stdout"] == "42\n"
+    assert created["execution"]["stderr"] == ""
+    assert created["execution"]["network_access"] == "disabled"
+    assert created["execution"]["repository_access"] == "denied"
+    calls = [json.loads(line) for line in calls_path.read_text().splitlines()]
+    assert len(calls) == 1
+    call = calls[0]
+    assert call[:3] == [
+        "sandbox",
+        "--permission-profile",
+        "axiom-relay-root-math",
+    ]
+    assert "permissions.axiom-relay-root-math.network.enabled=false" in call
+    filesystem = next(
+        value
+        for value in call
+        if value.startswith(
+            "permissions.axiom-relay-root-math.filesystem="
+        )
+    )
+    assert str(claude_core.AGENTS_ROOT.parent.resolve()) in filesystem
+    assert '="deny"' in filesystem
+    assert str(python_bin) in filesystem
+
+    replayed = claude_core.run_math_experiment(**arguments)
+    assert replayed["status"] == "existing"
+    assert replayed["result_sha256"] == created["result_sha256"]
+    assert len(calls_path.read_text().splitlines()) == 1
+
+    with pytest.raises(
+        claude_core.ClaudeCoreError, match="durable artifact collision"
+    ):
+        claude_core.run_math_experiment(
+            **{**arguments, "code": "print(43)"}
+        )
+
+    monkeypatch.setattr(claude_core, "MAX_MATH_EXPERIMENT_STDOUT_BYTES", 32)
+    limited = claude_core.run_math_experiment(
+        **{
+            **arguments,
+            "experiment_id": "exp_output_cap",
+            "purpose": "Confirm bounded diagnostic output.",
+            "code": "print('x' * 4096)",
+        }
+    )
+    assert limited["execution"]["execution_status"] == "output_limit"
+    assert limited["execution"]["stdout_truncated"] is True
+    assert limited["execution"]["stdout_retained_bytes"] == 32
+
+    timed_out = claude_core.run_math_experiment(
+        **{
+            **arguments,
+            "experiment_id": "exp_timeout",
+            "purpose": "Confirm the wall-clock limit.",
+            "code": "import time\ntime.sleep(5)",
+            "timeout_seconds": 1,
+        }
+    )
+    assert timed_out["execution"]["execution_status"] == "timeout"
+
+    artifact_root = (
+        tmp_path
+        / "state"
+        / "example"
+        / claude_core.PRIVATE_MATH_EXPERIMENT_DIRECTORY
+        / statement_sha256
+        / arguments["root_session_id"]
+    )
+    for filename in (
+        "exp_sum_check.request.json",
+        "exp_sum_check.result.json",
+    ):
+        assert stat.S_IMODE((artifact_root / filename).stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(
+    sys.platform not in {"darwin", "linux"} or shutil.which("codex") is None,
+    reason="Codex sandbox is unavailable on this test host",
+)
+def test_root_math_experiment_real_sandbox_denies_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generation_root = tmp_path / "generation"
+    data_root = generation_root / "data"
+    data_root.mkdir(parents=True)
+    statement = data_root / "example.md"
+    statement.write_text("Investigate the finite model.\n", encoding="utf-8")
+    statement_sha256 = hashlib.sha256(statement.read_bytes()).hexdigest()
+    python_bin = Path(sys.executable).resolve(strict=True)
+    python_sha256 = hashlib.sha256(python_bin.read_bytes()).hexdigest()
+    codex_bin = Path(str(shutil.which("codex"))).resolve(strict=True)
+    protected_path = Path(claude_core.__file__).resolve(strict=True)
+    monkeypatch.setattr(claude_core, "GENERATION_ROOT", generation_root)
+    monkeypatch.setattr(claude_core, "STATE_ROOT", tmp_path / "state")
+    monkeypatch.setattr(claude_core, "PYTHON_BIN", python_bin)
+
+    code = (
+        "import pathlib, scipy\n"
+        "print('scipy', scipy.__version__)\n"
+        f"target = pathlib.Path({str(protected_path)!r})\n"
+        "try:\n"
+        "    target.read_text()\n"
+        "except PermissionError:\n"
+        "    print('repository-denied')\n"
+        "else:\n"
+        "    raise SystemExit('repository unexpectedly readable')\n"
+    )
+    result = claude_core.run_math_experiment(
+        problem_id="example",
+        statement_sha256=statement_sha256,
+        root_session_id="12345678-1234-4123-8123-123456789abc",
+        experiment_id="exp_real_sandbox",
+        purpose="Verify the real math sandbox boundary.",
+        code=code,
+        timeout_seconds=20,
+        codex_bin=codex_bin,
+        expected_python_runtime_sha256=python_sha256,
+        expected_host_source_sha256=claude_core._host_source_sha256(),
+    )
+    assert result["execution"]["execution_status"] == "completed"
+    assert "scipy " in result["execution"]["stdout"]
+    assert "repository-denied\n" in result["execution"]["stdout"]
+
+
 def test_manual_reference_candidate_ingest_uses_private_inbox_and_is_idempotent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -15387,6 +15556,7 @@ def test_claude_root_mcp_exposes_only_role_gated_host_tools(
     )
     observed_memory_call: dict[str, object] = {}
     observed_search_calls: list[tuple[str, dict[str, object]]] = []
+    observed_math_call: dict[str, object] = {}
 
     class FakeLegacy:
         @staticmethod
@@ -15419,6 +15589,22 @@ def test_claude_root_mcp_exposes_only_role_gated_host_tools(
 
     monkeypatch.setattr(claude_core, "_legacy", lambda: FakeLegacy())
 
+    def fake_math_experiment(**kwargs: object) -> dict[str, object]:
+        observed_math_call.update(kwargs)
+        return {
+            "schema_version": claude_core.MATH_EXPERIMENT_RECEIPT_SCHEMA,
+            "status": "created",
+            "execution": {
+                "execution_status": "completed",
+                "evidence_class": "unverified_computational_diagnostic",
+                "stdout": "42\n",
+            },
+        }
+
+    monkeypatch.setattr(
+        claude_core, "run_math_experiment", fake_math_experiment
+    )
+
     def reject_blueprint(
         *_args: object, **_kwargs: object
     ) -> dict[str, object]:
@@ -15437,6 +15623,7 @@ def test_claude_root_mcp_exposes_only_role_gated_host_tools(
         "search_matlas_theorems",
         "search_arxiv_theorems",
         "read_arxiv_primary",
+        "run_math_experiment",
         "prepare_pro_gap_query",
         "get_pro_gap_query",
         "ingest_pro_gap_response",
@@ -15510,6 +15697,26 @@ def test_claude_root_mcp_exposes_only_role_gated_host_tools(
             },
         ),
     ]
+    math_result = tools["run_math_experiment"].fn(
+        problem_id="example",
+        experiment_id="exp_route_discriminator",
+        purpose="Falsify one candidate route before council admission.",
+        code="print(6 * 7)",
+        timeout_seconds=12,
+    )
+    assert math_result["execution"]["stdout"] == "42\n"
+    assert observed_math_call == {
+        "problem_id": "example",
+        "statement_sha256": digest,
+        "root_session_id": session_id,
+        "experiment_id": "exp_route_discriminator",
+        "purpose": "Falsify one candidate route before council admission.",
+        "code": "print(6 * 7)",
+        "timeout_seconds": 12,
+        "codex_bin": Path(sys.executable).resolve(),
+        "expected_python_runtime_sha256": "3" * 64,
+        "expected_host_source_sha256": claude_core._host_source_sha256(),
+    }
     preflight = tools["write_blueprint"].fn(
         problem_id="example",
         statement_sha256=digest,

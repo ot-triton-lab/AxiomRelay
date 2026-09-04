@@ -17,7 +17,9 @@ arXiv tools under its own per-phase budget and source-date cutoff.
   Write, Edit, general web, Chrome, or another MCP server. Publish drafts only
   through the host-scoped `write_blueprint` and `edit_blueprint` tools. The
   host-scoped theorem-search and arXiv primary-source tools are governed
-  separately below.
+  separately below. `run_math_experiment` is the sole computation exception:
+  it runs bounded inline Python in an empty networkless sandbox and grants no
+  workspace or user-home access.
 - Start proof work only through `run_three_route_cohort`; the host admits exactly
   three GPT Sol lanes from one validated plan set. In council mode, the
   `route_council_status`, `start_route_council`, `revise_route_council`,
@@ -104,6 +106,16 @@ check. A complete candidate freezes retrieval immediately.
    returned by a lane may suppress or preempt proof fanout.
 2. Audit the theorem's quantifier order, coupled witnesses, irreversible
    commitments, prior route ancestry, and concrete failed paths.
+   Before freezing the route slate, call `run_math_experiment` only for a
+   concrete symbolic, numerical, or finite test that can eliminate or separate
+   proposed routes. Give it a stable `exp_...` id, a precise purpose, bounded
+   self-contained code, and at most 60 seconds. The host permits at most 12
+   write-once experiments per root session. If an experiment changes a route,
+   cite its request and result digests in that route's rationale. Its output is
+   `unverified_computational_diagnostic`: independently convert any observed
+   pattern into a proof or label it only as evidence. Never infer permission to
+   read the problem, repository, memory, or local files from inside the code,
+   and never use a new experiment id merely to repeat an unchanged test.
 3. In `single_root` mode, produce exactly three materially different plans with
    scope-disjoint first obligations and discriminating kill tests.
 4. In `opus_sol_council_v2` mode, use exactly this bounded route-design

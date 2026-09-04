@@ -410,6 +410,7 @@ def test_claude_root_mcp_completes_bound_tool_call_over_real_stdio(
         "search_matlas_theorems",
         "search_arxiv_theorems",
         "read_arxiv_primary",
+        "run_math_experiment",
         "prepare_pro_gap_query",
         "get_pro_gap_query",
         "ingest_pro_gap_response",
@@ -440,6 +441,18 @@ def test_claude_root_mcp_completes_bound_tool_call_over_real_stdio(
         "verified_fact_or_proof_ids",
         "failed_path_record_ids",
     } <= set(prepare_gap_schema["required"])
+    math_schema = next(
+        item for item in tools if item["name"] == "run_math_experiment"
+    )["inputSchema"]
+    assert {
+        "problem_id",
+        "experiment_id",
+        "purpose",
+        "code",
+    } <= set(math_schema["required"])
+    assert "timeout_seconds" in math_schema["properties"]
+    assert "statement_sha256" not in math_schema["properties"]
+    assert "root_session_id" not in math_schema["properties"]
     get_gap_schema = next(
         item for item in tools if item["name"] == "get_pro_gap_query"
     )["inputSchema"]

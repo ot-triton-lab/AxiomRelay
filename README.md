@@ -153,6 +153,18 @@ Claude roots are currently available in `core` mode only. They receive a
 read-only workspace view plus a narrow host interface; they do not receive
 general shell, write, browser, or subagent authority.
 
+Before freezing a route slate, a Claude root may run a concrete symbolic,
+numeric, or finite diagnostic through `run_math_experiment`. This is not a
+general shell: the host executes inline Python in an empty Codex sandbox with
+the repository and user home denied, network disabled, and a 60-second limit.
+Each root session has at most 12 write-once experiments, with 32 KiB of code,
+64 KiB of stdout, and 16 KiB of stderr per experiment. NumPy, SciPy, SymPy,
+mpmath, and gmpy2 come from the attested generation environment. The private
+receipt is `unverified_computational_diagnostic`; it can discriminate routes
+but cannot prove a claim or authorize a cohort. The isolated Sol council seat
+still has no shell or Python, while admitted GPT-Sol proof lanes retain their
+existing restricted math runtime.
+
 ### Model-policy profiles
 
 | Profile | Proof lanes | Verifier 1 | Verifier 2 |
@@ -499,6 +511,8 @@ Historical receipt bytes must never be rewritten merely to update branding.
 - Proof lanes are isolated from the root transcript and from one another.
 - Each verifier item runs in a fresh minimal workspace.
 - Raw model streams and model-written result files are not proof authority.
+- Root math-experiment receipts are private computational diagnostics, not
+  proof steps or publication authority.
 - Deterministic host code checks content digests, item coverage, model
   provenance, pass identity, and atomic publication.
 - A read-only sandbox is not a complete confidentiality boundary. Use a

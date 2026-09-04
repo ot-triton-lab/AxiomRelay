@@ -148,6 +148,18 @@ def test_safe_three_route_policy_is_machine_readable_and_bounded() -> None:
         "root_is_canonical_memory_writer": True,
         "initial_memory_init_calls": 0,
         "initial_memory_search_calls_for_continuation": 1,
+        "root_math_experiment_tool": "run_math_experiment",
+        "root_math_experiment_max_calls_per_root": 12,
+        "root_math_experiment_max_code_bytes": 32768,
+        "root_math_experiment_max_timeout_seconds": 60,
+        "root_math_experiment_max_stdout_bytes": 65536,
+        "root_math_experiment_max_stderr_bytes": 16384,
+        "root_math_experiment_network": False,
+        "root_math_experiment_repository_access": False,
+        "root_math_experiment_persistence": "private_write_once_receipt",
+        "root_math_experiment_evidence_class": (
+            "unverified_computational_diagnostic"
+        ),
         "persistence_mode": "write_behind_phase_checkpoint",
         "checkpoint_tool": "memory_append_batch",
         "max_checkpoint_records": 32,

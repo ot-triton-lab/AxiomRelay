@@ -128,6 +128,8 @@ Host 负责准入、fencing（隔离并作废旧实例）、恢复和发布。ro
 
 Claude root 目前只能用于 `core` 模式。它只能查看只读 workspace，并通过少量 host 接口执行规定动作。通用 shell、文件写入、浏览器和 subagent 权限均未开放。
 
+在冻结 route slate 之前，Claude root 可以通过 `run_math_experiment` 运行一个明确的符号、数值或有限计算测试。这不是通用 shell：host 只在空的 Codex sandbox 中执行 inline Python，禁止读取仓库和用户 home，关闭网络，并把单次时间限制为 60 秒。每个 root session 最多有 12 个 write-once experiments；单次代码、stdout 和 stderr 上限分别为 32 KiB、64 KiB 和 16 KiB。NumPy、SciPy、SymPy、mpmath 与 gmpy2 来自经过认证的 generation 环境。私有 receipt 的类别是 `unverified_computational_diagnostic`，只能用于区分路线，不能证明命题或授权 cohort。隔离的 Sol council seat 仍然没有 shell 或 Python；正式 admitted 的 GPT-Sol proof lanes 继续使用原有的受限数学运行时。
+
 ### 模型策略配置
 
 | Profile | 证明 lanes | Verifier 1 | Verifier 2 |
@@ -419,6 +421,7 @@ PROBLEM_FILE=data/my_problem.md \
 - Proof lane 看不到 root transcript，也与其他 lanes 隔离。
 - 每个 verifier item 都在新建的最小 workspace 中运行。
 - 原始模型 stream 以及模型自行写入的 result files 都没有证明权威。
+- Root math-experiment receipts 只是私有计算诊断，不是 proof step 或 publication authority。
 - 确定性的 host 代码负责核对 content digests、item coverage、模型来源和 pass 身份，并执行原子发布。
 - 只读 sandbox 不能提供完整的机密性隔离。处理敏感的对抗输入时，应使用专用 container 或 OS account。
 
