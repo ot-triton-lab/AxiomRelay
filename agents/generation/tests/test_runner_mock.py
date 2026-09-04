@@ -1706,15 +1706,18 @@ if "--print" in sys.argv:
             handle.write(str(max_output_attempt))
     if max_output_failures > 0 and max_output_attempt <= max_output_failures:
         max_output_tokens = os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "")
+        markerless = os.environ.get("MOCK_CLAUDE_MAX_OUTPUT_MARKERLESS") == "1"
+        message = {{
+            "type": "message",
+            "role": "assistant",
+            "content": [{{"type": "text", "text": "output exhausted"}}],
+        }}
+        if not markerless:
+            message["is_api_error_message"] = True
+            message["api_error"] = "max_output_tokens"
         print(json.dumps({{
             "type": "assistant",
-            "message": {{
-                "type": "message",
-                "role": "assistant",
-                "content": [{{"type": "text", "text": "output exhausted"}}],
-                "is_api_error_message": True,
-                "api_error": "max_output_tokens",
-            }},
+            "message": message,
         }}))
         print(json.dumps({{
             "type": "result",
@@ -5754,8 +5757,9 @@ def test_claude_root_stream_projection_filters_thinking_flood(
     assert len(completed.stdout.encode("utf-8")) < 50_000
 
 
+@pytest.mark.parametrize("markerless", [False, True])
 def test_claude_root_auto_continues_exact_max_output_error_in_same_session(
-    tmp_path: Path,
+    tmp_path: Path, markerless: bool,
 ) -> None:
     runner, fake_bin = _make_runner_tree(tmp_path)
     fake_curl = fake_bin / "curl"
@@ -5763,18 +5767,21 @@ def test_claude_root_auto_continues_exact_max_output_error_in_same_session(
     fake_curl.chmod(0o755)
     calls_file = tmp_path / "claude-calls.jsonl"
     state_file = tmp_path / "claude-max-output-state"
+    extra_environment = {
+        "RETHLAS_RUN_MODE": "core",
+        "RETHLAS_MAIN_AGENT": "opus",
+        "RETHLAS_CLAUDE_ROOT_CANARY": "1",
+        "MOCK_CLAUDE_CALLS_FILE": str(calls_file),
+        "MOCK_CLAUDE_MAX_OUTPUT_FAILURES": "2",
+        "MOCK_CLAUDE_MAX_OUTPUT_STATE": str(state_file),
+    }
+    if markerless:
+        extra_environment["MOCK_CLAUDE_MAX_OUTPUT_MARKERLESS"] = "1"
     environment = _mock_environment(
         runner,
         fake_bin,
         mode="trusted",
-        extra_environment={
-            "RETHLAS_RUN_MODE": "core",
-            "RETHLAS_MAIN_AGENT": "opus",
-            "RETHLAS_CLAUDE_ROOT_CANARY": "1",
-            "MOCK_CLAUDE_CALLS_FILE": str(calls_file),
-            "MOCK_CLAUDE_MAX_OUTPUT_FAILURES": "2",
-            "MOCK_CLAUDE_MAX_OUTPUT_STATE": str(state_file),
-        },
+        extra_environment=extra_environment,
     )
 
     completed = subprocess.run(

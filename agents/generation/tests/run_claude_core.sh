@@ -2174,8 +2174,7 @@ if terminal_error:
         last_result.get("error") == "max_output_tokens"
         or last_result.get("api_error") == "max_output_tokens"
         or (
-            assistant_max_output_error
-            and last_result.get("terminal_reason") == "api_error"
+            last_result.get("terminal_reason") == "api_error"
             and result_text == expected_error
         )
     )
