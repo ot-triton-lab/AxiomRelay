@@ -2157,11 +2157,13 @@ for line in lines:
     if value.get("type") == "result":
         last_result = value
     message = value.get("message")
-    if (
-        value.get("type") == "assistant"
-        and isinstance(message, dict)
-        and message.get("is_api_error_message") is True
-        and message.get("api_error") == "max_output_tokens"
+    if value.get("type") == "assistant" and (
+        value.get("error") == "max_output_tokens"
+        or (
+            isinstance(message, dict)
+            and message.get("is_api_error_message") is True
+            and message.get("api_error") == "max_output_tokens"
+        )
     ):
         assistant_max_output_error = True
 
@@ -2175,7 +2177,8 @@ if terminal_error:
         or last_result.get("api_error") == "max_output_tokens"
         or (
             last_result.get("terminal_reason") == "api_error"
-            and result_text == expected_error
+            and isinstance(result_text, str)
+            and result_text.startswith(expected_error)
         )
     )
 else:

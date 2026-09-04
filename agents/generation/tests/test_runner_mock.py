@@ -1715,20 +1715,26 @@ if "--print" in sys.argv:
         if not markerless:
             message["is_api_error_message"] = True
             message["api_error"] = "max_output_tokens"
-        print(json.dumps({{
+        assistant_event = {{
             "type": "assistant",
             "message": message,
-        }}))
+        }}
+        if markerless:
+            assistant_event["error"] = "max_output_tokens"
+        print(json.dumps(assistant_event))
+        result_text = (
+            "API Error: Claude's response exceeded the "
+            + max_output_tokens
+            + " output token maximum."
+        )
+        if markerless:
+            result_text += " To configure this behavior, adjust the output cap."
         print(json.dumps({{
             "type": "result",
             "subtype": "success",
             "is_error": True,
             "terminal_reason": "api_error",
-            "result": (
-                "API Error: Claude's response exceeded the "
-                + max_output_tokens
-                + " output token maximum."
-            ),
+            "result": result_text,
         }}))
         raise SystemExit(1)
     if os.environ.get("MOCK_CLAUDE_RECOVERED_MAX_OUTPUT") == "1":
