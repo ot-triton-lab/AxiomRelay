@@ -113,6 +113,24 @@ The host controls admission, fencing, recovery, and publication. Roots design
 and synthesize. Proof lanes cannot spawn descendants. Verifiers cannot edit the
 proof or publish it.
 
+### AxiomGraph bridge (experimental foundation)
+
+After an already-reconciled `rethlas-publication-v6` result, the host now makes
+a best-effort, additive AxiomGraph shadow projection. The projection preserves
+the publication receipt and ProofItem artifact digests, builds a target-rooted
+AND-OR witness, and writes a separate immutable sidecar. Failure of this shadow
+path cannot alter publication status, bytes, receipts, or API output.
+The hook is inactive unless the separately versioned `axiomgraph-contract`
+package is installed in the AxiomRelay runtime; sibling-repository test paths
+do not count as a production dependency installation.
+
+This is not yet the stopped-unsolved takeover trigger. Automatic transfer to a
+Danus controller remains disabled until AxiomRelay can authenticate one exact
+terminal cohort, source state, absence of owner/Pro waits, and the lease/fence
+CAS. A bounded `stop_unsolved` result is evidence that the fast path stopped;
+it must never be relabeled as proof that the theorem is mathematically
+impossible.
+
 ## What counts as success
 
 A run succeeds only when all of the following are true:

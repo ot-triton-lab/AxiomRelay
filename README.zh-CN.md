@@ -94,6 +94,21 @@ Pro 的回答即使不成立，也不会抹掉此前的进度。若其中某一�
 
 Host 负责准入、fencing（隔离并作废旧实例）、恢复和发布。root 设计路线并综合证明。证明 lane 不能继续派生 agent，verifier 也没有编辑或发布证明的权限。
 
+### AxiomGraph 桥接（实验性基础）
+
+当 `rethlas-publication-v6` 已经通过原有权威流程完成 reconcile 后，host 会以
+best-effort 方式额外生成一份 AxiomGraph shadow projection。它保留原 publication
+receipt 和 ProofItem artifact digest，构造从目标出发的 AND-OR witness，并写入独立、
+不可变的 sidecar。shadow 路径失败不会改变原有 publication 状态、字节、receipt 或
+API 返回值。
+只有在 AxiomRelay runtime 中明确安装了独立版本的 `axiomgraph-contract` 包，这个
+hook 才会生效；测试时使用 sibling repository 的 `PYTHONPATH` 不等于生产依赖已经安装。
+
+这还不是 `stopped_unsolved` 的自动接管触发器。只有当 AxiomRelay 能认证同一个终局
+cohort、source state、没有未完成的 owner/Pro wait，并完成 lease/fence CAS 后，才会
+开放向 Danus controller 的自动转移。一次有界的 `stop_unsolved` 只说明 fast path
+停止了，绝不能被改写成“已经证明该定理在数学上不可能”。
+
 ## 什么才算成功
 
 一次运行只有满足下面五项条件才算成功：

@@ -25500,6 +25500,58 @@ def _assert_verification_root_mutable_unlocked(
         )
 
 
+def _try_backfill_axiomgraph_publication_shadow(
+    *, problem_id: str, statement_sha256: str, publication: Mapping[str, Any]
+) -> dict[str, str] | None:
+    """Best-effort additive projection after the normal authority check.
+
+    A shadow failure can never change an existing publication result.  The
+    explicit adapter API remains available for diagnostics and backfill.
+    """
+
+    if (
+        publication.get("status") != "published"
+        or publication.get("publication_schema") != "rethlas-publication-v6"
+        or publication.get("statement_sha256") != statement_sha256
+    ):
+        return None
+    try:
+        from axiomgraph_shadow_adapter import (
+            project_reconciled_publication_v6,
+            write_publication_projection,
+        )
+
+        _source, statement_raw, actual_statement_sha256 = _statement(problem_id)
+        if actual_statement_sha256 != statement_sha256:
+            return None
+        receipt_path = Path(str(publication["publication_receipt_path"]))
+        receipt = _read_canonical_object(
+            receipt_path,
+            label="publication receipt for AxiomGraph shadow",
+            maximum_bytes=MAX_LEGACY_PUBLICATION_RECEIPT_BYTES,
+        )
+        blueprint_raw = Path(str(publication["published_path"])).read_bytes()
+        projection = project_reconciled_publication_v6(
+            problem_id=problem_id,
+            statement_raw=statement_raw,
+            blueprint_raw=blueprint_raw,
+            receipt=receipt,
+            publication_receipt_sha256=str(
+                publication["publication_receipt_sha256"]
+            ),
+            proof_context_parser=_proof_context(),
+        )
+        return write_publication_projection(
+            projection=projection,
+            shadow_root=STATE_ROOT / "axiomgraph_shadow",
+        )
+    except Exception:
+        # The original publication is load-bearing authority.  Shadow export
+        # is deliberately fail-independent and is never a reason to retract or
+        # mutate that result.
+        return None
+
+
 def get_publication(
     *, problem_id: str, statement_sha256: str
 ) -> dict[str, Any] | None:
@@ -25522,6 +25574,11 @@ def get_publication(
         publication=publication,
     )
     _cancel_cohort_recoveries(problem_id)
+    _try_backfill_axiomgraph_publication_shadow(
+        problem_id=problem_id,
+        statement_sha256=statement_sha256,
+        publication=publication,
+    )
     return publication
 
 
@@ -25563,6 +25620,11 @@ def verify_blueprint(
             publication=existing,
         )
         _cancel_cohort_recoveries(problem_id)
+        _try_backfill_axiomgraph_publication_shadow(
+            problem_id=problem_id,
+            statement_sha256=statement_sha256,
+            publication=existing,
+        )
         return {
             **existing,
             "verdict": "correct",
@@ -25835,6 +25897,11 @@ def verify_blueprint(
             )
             result["cancelled_recovery_cohorts"] = _cancel_cohort_recoveries(
                 problem_id
+            )
+            _try_backfill_axiomgraph_publication_shadow(
+                problem_id=problem_id,
+                statement_sha256=statement_sha256,
+                publication=publication,
             )
         else:
             publication = _existing_publication(problem_id, statement_sha256)
