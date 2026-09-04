@@ -9652,6 +9652,8 @@ def test_invalid_council_report_preserves_actionable_rejected_artifact(
     assert receipt["execution"]["validation_error"] == (
         "blind route-council report binding mismatch"
     )
+    assert receipt["model"] == "gpt-6-astra"
+    assert receipt["reasoning_effort"] == "max"
     rejected_path = (
         state_root
         / "example"

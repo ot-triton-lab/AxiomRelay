@@ -679,7 +679,7 @@ Observed zero-model smoke results:
 | `compatible` | resolved | Sol | Sol, Sol |
 | `balanced` | resolved | Sol | Sol, Terra |
 | `economy` | resolved | Terra | Sol, Terra |
-| `max_diversity` | resolved and verifier-canary validated | Sol | Sol, cold Claude Opus 5 1M |
+| `max_diversity` | resolved; Astra runtime canary pending | GPT-6 Astra `max` | GPT-6 Astra `max`, cold Claude Opus 5 1M `max` |
 
 The cold Claude adapter passes fake-provider process, auth, provider, tool
 isolation, nonpersistent session, model fallback, raw-JSON/local-schema, and
@@ -693,9 +693,11 @@ tokens. Current v3 publication receipts record the two actual canonical models
 and efforts; adapter/provider/launch provenance is retained in the verifier
 service audit. The planned v4 model-policy digest and provider binding remain a
 separate Milestone 2 release gate.
-The canary effort is historical: the current `max_diversity` policy defaults
-both Sol Pass 1 and Opus Pass 2 to `max`, while the other profiles keep their
-existing Sol `xhigh` primary default.
+The canary above is historical and used Sol. The current `max_diversity`
+policy selects `gpt-6-astra` at `max` for generation, OpenAI council seats,
+and Pass 1; Opus Pass 2 remains at `max`. Other profiles retain their existing
+models and efforts. The legacy `gpt-sol` / `opus-sol-council` entrypoint names
+remain stable. A new Astra paid canary has not been run.
 When the Root is also Opus 5, `require_adversarial_distinct_from_root` is false
-by explicit owner policy; Verifier Pass 1 and Pass 2 remain distinct across Sol
+by explicit owner policy; Verifier Pass 1 and Pass 2 remain distinct across Astra
 and Opus as well as OpenAI and Vertex.

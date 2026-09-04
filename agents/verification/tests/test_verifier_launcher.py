@@ -186,7 +186,7 @@ def test_remote_verifier_accepts_tls_and_random_256_bit_token(
         ("economy", "gpt-5.6-sol/xhigh", "gpt-5.6-terra/max"),
         (
             "max_diversity",
-            "gpt-5.6-sol/max",
+            "gpt-6-astra/max",
             "claude-opus-5[1m]/max via vertex",
         ),
     ],
@@ -455,7 +455,7 @@ def test_max_diversity_explicit_opus_mapping_combines_with_vertex_settings(
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "Verifier profile: max_diversity" in completed.stdout
-    assert "Primary verifier: gpt-5.6-sol/max" in completed.stdout
+    assert "Primary verifier: gpt-6-astra/max" in completed.stdout
     assert "Adversarial verifier: claude-opus-5[1m]/max via vertex" in completed.stdout
     invocations = [json.loads(line) for line in calls.read_text().splitlines()]
     assert invocations == [["auth", "status"]]

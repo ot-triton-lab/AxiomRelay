@@ -186,6 +186,7 @@ COUNCIL_ID_RE = re.compile(r"^council_[0-9a-f]{32}$")
 COUNCIL_POINTER_SCHEMA = "rethlas_route_council_pointer_v2"
 COUNCIL_POINTER_SCHEMA_PREVIOUS = "rethlas_route_council_pointer_v1"
 COUNCIL_PHASE_INTENT_SCHEMA = "rethlas_route_council_phase_intent_v3"
+COUNCIL_CODEX_MODEL = "gpt-6-astra"
 COUNCIL_PHASE_RECEIPT_SCHEMA = "rethlas_route_council_phase_receipt_v3"
 COUNCIL_PHASE_DISPATCH_SCHEMA = "rethlas_route_council_phase_dispatch_v1"
 COUNCIL_PHASE_WORKER_SCHEMA = "rethlas_route_council_phase_worker_v2"
@@ -410,9 +411,17 @@ RUNTIME_DEPENDENCY_SHA256 = {
     "mcp/legacy_verification_client.py": "a84cc93af6c538e665078f277417223d96ea54d1cd5b64e533dc576ba40517b7",
     "mcp/proof_context.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166",
     "mcp/publication_proof_context_v3.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166",
+    "mcp/publication_export_v1.py": "657d14147e1e3ed040cc503d1cd78e6c763c379a0d8bc8af11fed5b4723235e2",
+    "mcp/axiomgraph_source_interface_v1.json": "6f27dc08406a02f1e3997effab0e8d7ca801e6db5f1d923bd976f38dad4bd072",
 }
 PROOF_CONTEXT_SOURCE = (
     _RUNTIME_MCP_ROOT / "publication_proof_context_v3.py"
+).absolute()
+PUBLICATION_EXPORT_SOURCE = (
+    _RUNTIME_MCP_ROOT / "publication_export_v1.py"
+).absolute()
+AXIOMGRAPH_SOURCE_INTERFACE_MANIFEST = (
+    _RUNTIME_MCP_ROOT / "axiomgraph_source_interface_v1.json"
 ).absolute()
 
 
@@ -9278,7 +9287,7 @@ def _invoke_sol_council(
             str(executable), "exec", "--strict-config", "--ephemeral",
             "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only",
             "--skip-git-repo-check", "--json", "--color", "never", "--model",
-            "gpt-5.6-sol", "--cd", str(workspace), "--output-schema", str(schema_path),
+            COUNCIL_CODEX_MODEL, "--cd", str(workspace), "--output-schema", str(schema_path),
             "--config", 'model_reasoning_effort="max"',
             "--config", "developer_instructions=" + json.dumps(developer_instructions),
             "--config", 'web_search="disabled"',
@@ -12032,7 +12041,7 @@ def _read_council_phase_receipt(
         or value.get("statement_sha256") != statement_sha256
         or value.get("root_session_id") != root_session_id
         or value.get("request_sha256") != request_sha256
-        or value.get("model") != "gpt-5.6-sol"
+        or value.get("model") != COUNCIL_CODEX_MODEL
         or value.get("reasoning_effort") != "max"
         or value.get("retrieval_profile") != retrieval_profile
         or value.get("retrieval_profile_sha256") != retrieval_profile_sha256
@@ -12096,7 +12105,7 @@ def _validate_council_phase_intent(
         or value.get("statement_sha256") != statement_sha256
         or value.get("root_session_id") != root_session_id
         or value.get("request_sha256") != request_sha256
-        or value.get("model") != "gpt-5.6-sol"
+        or value.get("model") != COUNCIL_CODEX_MODEL
         or value.get("reasoning_effort") != "max"
         or value.get("retrieval_profile_sha256")
         != retrieval_profile_sha256
@@ -13358,7 +13367,7 @@ def _run_council_phase(
             "statement_sha256": statement_sha256,
             "root_session_id": root_session_id,
             "request_sha256": request_sha256,
-            "model": "gpt-5.6-sol",
+            "model": COUNCIL_CODEX_MODEL,
             "reasoning_effort": "max",
             "retrieval_profile": retrieval_profile,
             "retrieval_profile_sha256": retrieval_profile_sha256,
@@ -13422,7 +13431,7 @@ def _run_council_phase(
             "statement_sha256": statement_sha256,
             "root_session_id": root_session_id,
             "request_sha256": request_sha256,
-            "model": "gpt-5.6-sol",
+            "model": COUNCIL_CODEX_MODEL,
             "reasoning_effort": "max",
             "retrieval_profile_sha256": retrieval_profile_sha256,
             "retrieval_capability": retrieval_profile["capability"],
@@ -13642,7 +13651,7 @@ def _run_council_phase(
         "statement_sha256": statement_sha256,
         "root_session_id": root_session_id,
         "request_sha256": request_sha256,
-        "model": "gpt-5.6-sol",
+        "model": COUNCIL_CODEX_MODEL,
         "reasoning_effort": "max",
         "retrieval_profile": retrieval_profile,
         "retrieval_profile_sha256": retrieval_profile_sha256,
@@ -20025,7 +20034,11 @@ def _execute_cohort_worker(
                 "RETHLAS_LEGACY_STOP_AFTER_CURRENT_COHORT": "1",
                 "MAX_ITERATIONS": "1",
                 "PROBLEM_FILE": f"data/{problem_id}.md",
-                "MODEL": "gpt-5.6-sol",
+                "MODEL": (
+                    COUNCIL_CODEX_MODEL
+                    if os.environ.get("RETHLAS_MODEL_POLICY_PROFILE") == "max_diversity"
+                    else "gpt-5.6-sol"
+                ),
                 "REASONING_EFFORT": "max",
                 "RETHLAS_GENERATION_PYTHON_BIN": str(PYTHON_BIN),
                 "RETHLAS_COHORT_CODEX_BIN": str(codex_executable),
@@ -20267,6 +20280,80 @@ def _execute_cohort_worker(
 _LEGACY_MODULE: Any | None = None
 _PROOF_CONTEXT_MODULE: Any | None = None
 _PROOF_CONTEXT_SHA256: str | None = None
+_PUBLICATION_EXPORT_MODULE: Any | None = None
+_PUBLICATION_EXPORT_SHA256: str | None = None
+
+
+def _read_pinned_runtime_dependency(
+    relative: str, path: Path, *, label: str, maximum_bytes: int
+) -> tuple[bytes, str]:
+    expected_sha256 = RUNTIME_DEPENDENCY_SHA256.get(relative)
+    if not _is_sha256(expected_sha256):
+        raise ClaudeCoreError(f"{label} has no runtime dependency binding")
+    with _pinned_regular_file_fd(
+        path,
+        expected_sha256=str(expected_sha256),
+        label=label,
+    ) as descriptor:
+        size = os.fstat(descriptor).st_size
+        if size <= 0 or size > maximum_bytes:
+            raise ClaudeCoreError(f"{label} size is invalid")
+        chunks: list[bytes] = []
+        offset = 0
+        while offset < size:
+            chunk = os.pread(descriptor, min(65_536, size - offset), offset)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            offset += len(chunk)
+        if offset != size:
+            raise ClaudeCoreError(f"{label} read was incomplete")
+    raw = b"".join(chunks)
+    return raw, str(expected_sha256)
+
+
+def _publication_export() -> tuple[Any, dict[str, Any], str, str]:
+    """Load the source-owned export ABI from the authenticated runtime bundle."""
+
+    global _PUBLICATION_EXPORT_MODULE, _PUBLICATION_EXPORT_SHA256
+    _assert_runtime_dependency_closure_current()
+    source_raw, source_sha256 = _read_pinned_runtime_dependency(
+        "mcp/publication_export_v1.py",
+        PUBLICATION_EXPORT_SOURCE,
+        label="publication export module",
+        maximum_bytes=2_000_000,
+    )
+    manifest_raw, manifest_sha256 = _read_pinned_runtime_dependency(
+        "mcp/axiomgraph_source_interface_v1.json",
+        AXIOMGRAPH_SOURCE_INTERFACE_MANIFEST,
+        label="AxiomGraph source interface manifest",
+        maximum_bytes=65_536,
+    )
+    if _PUBLICATION_EXPORT_MODULE is not None:
+        if source_sha256 != _PUBLICATION_EXPORT_SHA256:
+            raise ClaudeCoreError("publication export module changed after loading")
+        module = _PUBLICATION_EXPORT_MODULE
+    else:
+        module_name = "_rethlas_publication_export_v1"
+        module = types.ModuleType(module_name)
+        module.__file__ = str(PUBLICATION_EXPORT_SOURCE)
+        module.__package__ = ""
+        sys.modules[module_name] = module
+        try:
+            exec(
+                compile(source_raw, str(PUBLICATION_EXPORT_SOURCE), "exec"),
+                module.__dict__,
+            )
+        except Exception:
+            sys.modules.pop(module_name, None)
+            raise
+        _PUBLICATION_EXPORT_MODULE = module
+        _PUBLICATION_EXPORT_SHA256 = source_sha256
+    try:
+        manifest = module.load_interface_manifest(manifest_raw)
+    except Exception as exc:
+        raise ClaudeCoreError("AxiomGraph source interface manifest is invalid") from exc
+    return module, manifest, source_sha256, manifest_sha256
 
 
 def _read_proof_context_source() -> tuple[bytes, str]:
@@ -25500,13 +25587,114 @@ def _assert_verification_root_mutable_unlocked(
         )
 
 
-def _try_backfill_axiomgraph_publication_shadow(
+def _stable_publication_verifier_profile(
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    passes = receipt.get("verification_passes")
+    if not isinstance(passes, list) or len(passes) != 2:
+        raise ClaudeCoreError("publication does not contain the verifier quorum")
+    stable_passes: list[dict[str, Any]] = []
+    for index, verification_pass in enumerate(passes, start=1):
+        if not isinstance(verification_pass, Mapping):
+            raise ClaudeCoreError("publication verifier pass is malformed")
+        stable_passes.append(
+            {
+                "pass_index": index,
+                "verification_role": verification_pass.get("verification_role"),
+                "verifier_model": verification_pass.get("verifier_model"),
+                "verifier_reasoning_effort": verification_pass.get(
+                    "verifier_reasoning_effort"
+                ),
+                "verifier_service_version": verification_pass.get(
+                    "verifier_service_version"
+                ),
+            }
+        )
+    return {
+        "proof_context": receipt.get("proof_context"),
+        "verification_limits": receipt.get("verification_limits"),
+        "verification_passes": stable_passes,
+        "verification_quorum": receipt.get("verification_quorum"),
+    }
+
+
+def _normalized_publication_proof_manifest(manifest: Any) -> dict[str, Any]:
+    return {
+        "schema_version": "axiomrelay_normalized_proof_manifest_v1",
+        "proof_digest": manifest.proof_digest,
+        "source_kind": manifest.source_kind,
+        "topological_item_ids": list(manifest.topological_item_ids),
+        "items": [
+            {
+                "index": item.index,
+                "item_id": item.item_id,
+                "artifact_sha256": item.digest,
+                "title": item.title,
+                "label": item.label,
+                "statement": item.statement,
+                "depends_on": list(item.depends_on),
+                "dependency_mode": item.dependency_mode,
+            }
+            for item in manifest.items
+        ],
+    }
+
+
+def _persist_axiomgraph_export_failure(
+    *,
+    problem_id: str,
+    statement_sha256: str,
+    publication: Mapping[str, Any],
+    error: Exception,
+) -> None:
+    """Persist one bounded, non-authoritative export diagnostic if possible."""
+
+    category = re.sub(r"[^A-Za-z0-9_.-]", "_", type(error).__name__)[:96]
+    try:
+        diagnostic = " ".join(str(error).split())
+        encoded = diagnostic.encode("utf-8", "replace")[:512]
+        diagnostic = (
+            encoded.decode("utf-8", "ignore")
+            or "unspecified export failure"
+        )
+        receipt_sha256 = publication.get("publication_receipt_sha256")
+        binding = (
+            str(receipt_sha256)
+            if _is_sha256(receipt_sha256)
+            else statement_sha256
+        )
+        record = {
+            "schema_version": "axiomrelay_axiomgraph_export_failure_v1",
+            "problem_id": problem_id,
+            "statement_sha256": statement_sha256,
+            "publication_receipt_sha256": (
+                receipt_sha256 if _is_sha256(receipt_sha256) else None
+            ),
+            "loaded_claude_core_sha256": _loaded_host_source_sha256(),
+            "category": category,
+            "diagnostic": diagnostic,
+        }
+        failure_sha256 = sha256_bytes(canonical_json(record).encode("utf-8"))
+        directory = _mkdir_state_subdir(
+            "axiomgraph_exports", "v1", "failures", binding
+        )
+        _write_once(directory / f"{failure_sha256}.json", record, mode=0o400)
+    except Exception:
+        # The publication path remains authoritative even if its additive
+        # diagnostic store is unavailable.  Emit only a bounded category.
+        print(
+            f"AxiomGraph export failure audit unavailable: {category}",
+            file=sys.stderr,
+        )
+
+
+def _try_export_axiomgraph_publication_event(
     *, problem_id: str, statement_sha256: str, publication: Mapping[str, Any]
 ) -> dict[str, str] | None:
-    """Best-effort additive projection after the normal authority check.
+    """Best-effort source event after the normal publication authority check.
 
-    A shadow failure can never change an existing publication result.  The
-    explicit adapter API remains available for diagnostics and backfill.
+    A source-export failure can never change the publication result.  The
+    event is pure AxiomRelay data; a separate consumer may translate it.
     """
 
     if (
@@ -25516,39 +25704,98 @@ def _try_backfill_axiomgraph_publication_shadow(
     ):
         return None
     try:
-        from axiomgraph_shadow_adapter import (
-            project_reconciled_publication_v6,
-            write_publication_projection,
-        )
-
         _source, statement_raw, actual_statement_sha256 = _statement(problem_id)
         if actual_statement_sha256 != statement_sha256:
-            return None
+            raise ClaudeCoreError("statement changed before AxiomGraph export")
         receipt_path = Path(str(publication["publication_receipt_path"]))
         receipt = _read_canonical_object(
             receipt_path,
-            label="publication receipt for AxiomGraph shadow",
+            label="publication receipt for AxiomGraph export",
             maximum_bytes=MAX_LEGACY_PUBLICATION_RECEIPT_BYTES,
         )
         blueprint_raw = Path(str(publication["published_path"])).read_bytes()
-        projection = project_reconciled_publication_v6(
-            problem_id=problem_id,
-            statement_raw=statement_raw,
-            blueprint_raw=blueprint_raw,
-            receipt=receipt,
-            publication_receipt_sha256=str(
-                publication["publication_receipt_sha256"]
+        receipt_sha256 = sha256_bytes(
+            (canonical_json(receipt) + "\n").encode("utf-8")
+        )
+        if (
+            receipt_sha256 != publication.get("publication_receipt_sha256")
+            or sha256_file(receipt_path) != receipt_sha256
+            or sha256_bytes(blueprint_raw) != publication.get("proof_sha256")
+            or receipt.get("schema_version") != "rethlas-publication-v6"
+            or receipt.get("state") != "active"
+            or receipt.get("statement_source_digest") != statement_sha256
+            or receipt.get("proof_digest") != publication.get("proof_sha256")
+        ):
+            raise ClaudeCoreError("publication changed before AxiomGraph export")
+        try:
+            statement_text = statement_raw.decode("utf-8", "strict")
+            blueprint_text = blueprint_raw.decode("utf-8", "strict")
+            proof_context = _proof_context()
+            proof_manifest = proof_context.parse_blueprint(
+                blueprint_text,
+                target_statement=statement_text,
+            )
+        except (UnicodeError, TypeError, ValueError) as exc:
+            raise ClaudeCoreError(
+                "publication proof manifest cannot be exported"
+            ) from exc
+        if list(proof_manifest.item_ids) != receipt.get("checked_item_ids"):
+            raise ClaudeCoreError("publication proof coverage changed before export")
+
+        export, interface_manifest, export_sha256, interface_manifest_sha256 = (
+            _publication_export()
+        )
+        runtime_dependency_manifest_sha256 = sha256_bytes(
+            _runtime_dependency_manifest_bytes()
+        )
+        source_runtime = {
+            "loaded_claude_core_sha256": _loaded_host_source_sha256(),
+            "publication_export_module_sha256": export_sha256,
+            "interface_manifest_sha256": interface_manifest_sha256,
+            "runtime_dependency_manifest_sha256": (
+                runtime_dependency_manifest_sha256
             ),
-            proof_context_parser=_proof_context(),
+        }
+        event = export.make_verified_publication_event(
+            interface_manifest=interface_manifest,
+            source={
+                "authority_id": "rethlas-publication-v6",
+                "terminal_outcome": "published_verified",
+                "problem_id": problem_id,
+                "statement_sha256": statement_sha256,
+                "canonical_target_sha256": receipt[
+                    "canonical_target_digest"
+                ],
+                "blueprint_sha256": publication["proof_sha256"],
+                "publication_receipt_sha256": receipt_sha256,
+            },
+            exact_target_raw=statement_raw,
+            exact_blueprint_raw=blueprint_raw,
+            publication_receipt=receipt,
+            proof_manifest=_normalized_publication_proof_manifest(
+                proof_manifest
+            ),
+            stable_verifier_profile=_stable_publication_verifier_profile(
+                receipt
+            ),
+            source_runtime=source_runtime,
         )
-        return write_publication_projection(
-            projection=projection,
-            shadow_root=STATE_ROOT / "axiomgraph_shadow",
+        event_store = _mkdir_state_subdir(
+            "axiomgraph_exports", "v1", "publications"
         )
-    except Exception:
-        # The original publication is load-bearing authority.  Shadow export
-        # is deliberately fail-independent and is never a reason to retract or
-        # mutate that result.
+        return export.write_verified_publication_event(
+            event=event,
+            interface_manifest=interface_manifest,
+            expected_source_runtime=source_runtime,
+            event_store=event_store,
+        )
+    except Exception as exc:
+        _persist_axiomgraph_export_failure(
+            problem_id=problem_id,
+            statement_sha256=statement_sha256,
+            publication=publication,
+            error=exc,
+        )
         return None
 
 
@@ -25574,7 +25821,7 @@ def get_publication(
         publication=publication,
     )
     _cancel_cohort_recoveries(problem_id)
-    _try_backfill_axiomgraph_publication_shadow(
+    _try_export_axiomgraph_publication_event(
         problem_id=problem_id,
         statement_sha256=statement_sha256,
         publication=publication,
@@ -25620,7 +25867,7 @@ def verify_blueprint(
             publication=existing,
         )
         _cancel_cohort_recoveries(problem_id)
-        _try_backfill_axiomgraph_publication_shadow(
+        _try_export_axiomgraph_publication_event(
             problem_id=problem_id,
             statement_sha256=statement_sha256,
             publication=existing,
@@ -25898,7 +26145,7 @@ def verify_blueprint(
             result["cancelled_recovery_cohorts"] = _cancel_cohort_recoveries(
                 problem_id
             )
-            _try_backfill_axiomgraph_publication_shadow(
+            _try_export_axiomgraph_publication_event(
                 problem_id=problem_id,
                 statement_sha256=statement_sha256,
                 publication=publication,

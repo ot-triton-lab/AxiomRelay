@@ -96,13 +96,20 @@ Host 负责准入、fencing（隔离并作废旧实例）、恢复和发布。ro
 
 ### AxiomGraph 桥接（实验性基础）
 
-当 `rethlas-publication-v6` 已经通过原有权威流程完成 reconcile 后，host 会以
-best-effort 方式额外生成一份 AxiomGraph shadow projection。它保留原 publication
-receipt 和 ProofItem artifact digest，构造从目标出发的 AND-OR witness，并写入独立、
-不可变的 sidecar。shadow 路径失败不会改变原有 publication 状态、字节、receipt 或
-API 返回值。
-只有在 AxiomRelay runtime 中明确安装了独立版本的 `axiomgraph-contract` 包，这个
-hook 才会生效；测试时使用 sibling repository 的 `PYTHONPATH` 不等于生产依赖已经安装。
+当 `rethlas-publication-v6` 已经通过原有权威流程完成 reconcile 后，host 会通过一个
+版本化、仅使用标准库的 wire interface，以 best-effort 方式写出不可变 source event。
+规范 manifest 固定在 `agents/generation/mcp/axiomgraph_source_interface_v1.json`。
+每个 event 都绑定题目和 blueprint 的精确字节、publication receipt、规范化 ProofItem
+DAG、稳定 verifier profile，以及实际加载的 Core/export runtime digest；event 按
+publication receipt 与 event id 保存在
+`agents/.claude_core/axiomgraph_exports/v1/publications`。
+
+AxiomRelay 不再 import AxiomGraph，也不在内部构造 AxiomGraph 对象。独立版本的 consumer
+读取这套 source protocol，并且只有在核对 interface major/minor、required capability、
+精确 AxiomGraph schema digest 和 runtime source binding 后才能转换 event。因此，Relay
+内部重构只要继续保持 v1 语义就能兼容；破坏语义的修改必须发布新的 interface major 与
+event schema。export 失败不会改变原 publication 状态、字节、receipt 或 API 返回值，
+同时会留下有界的本地失败审计。
 
 这还不是 `stopped_unsolved` 的自动接管触发器。只有当 AxiomRelay 能认证同一个终局
 cohort、source state、没有未完成的 owner/Pro wait，并完成 lease/fence CAS 后，才会
@@ -150,9 +157,14 @@ Claude root 目前只能用于 `core` 模式。它只能查看只读 workspace�
 | `compatible` | Sol `max` | Sol `xhigh` | Sol `xhigh` |
 | `balanced` | Sol `max` | Sol `xhigh` | Terra `max` |
 | `economy` | Terra `max` | Sol `xhigh` | Terra `max` |
-| `max_diversity` | Sol `max` | Sol `max` | Opus 5 1M `max` |
+| `max_diversity` | GPT-6 Astra `max` | GPT-6 Astra `max` | Opus 5 1M `max` |
 
 `max_diversity` 要求 OpenAI 和 Claude 两个 provider 都已完成认证。Pass 2 会冷启动，只接收经过认证的证明上下文，不会看到 Pass 1 的判定、findings 或 session state。
+
+该配置下 council 的 OpenAI 席位也使用 `gpt-6-astra`、推理强度 `max`。
+`gpt-sol` 和 `opus-sol-council` 入口名称保持兼容。已有 session 保留原有的
+源码及模型绑定，升级后需要走现有的 source-drift 接管流程；本次尚未执行
+Astra 的付费端到端 canary。
 
 ## 快速开始
 

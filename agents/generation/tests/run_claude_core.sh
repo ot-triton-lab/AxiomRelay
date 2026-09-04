@@ -639,6 +639,8 @@ cleanup_claude_core_runtime() {
     "$claude_runtime_mcp_dir/legacy_verification_client.py" \
     "$claude_runtime_mcp_dir/proof_context.py" \
     "$claude_runtime_mcp_dir/publication_proof_context_v3.py" \
+    "$claude_runtime_mcp_dir/publication_export_v1.py" \
+    "$claude_runtime_mcp_dir/axiomgraph_source_interface_v1.json" \
     "$claude_core_runtime_dir/data" \
     "$claude_core_runtime_dir/results" \
     "$claude_core_runtime_dir/.claude_core_inputs" \
@@ -798,7 +800,9 @@ if ! runtime_dependency_manifest_sha256="$({
     "$ROOT_DIR/mcp/legacy_server.py" \
     "$ROOT_DIR/mcp/legacy_verification_client.py" \
     "$ROOT_DIR/mcp/proof_context.py" \
-    "$ROOT_DIR/mcp/publication_proof_context_v3.py" <<'PY'
+    "$ROOT_DIR/mcp/publication_proof_context_v3.py" \
+    "$ROOT_DIR/mcp/publication_export_v1.py" \
+    "$ROOT_DIR/mcp/axiomgraph_source_interface_v1.json" <<'PY'
 import hashlib
 import json
 import os
@@ -818,6 +822,8 @@ origins = {
     "mcp/legacy_verification_client.py": pathlib.Path(sys.argv[8]).absolute(),
     "mcp/proof_context.py": pathlib.Path(sys.argv[9]).absolute(),
     "mcp/publication_proof_context_v3.py": pathlib.Path(sys.argv[10]).absolute(),
+    "mcp/publication_export_v1.py": pathlib.Path(sys.argv[11]).absolute(),
+    "mcp/axiomgraph_source_interface_v1.json": pathlib.Path(sys.argv[12]).absolute(),
 }
 try:
     manifest = json.loads(manifest_text)

@@ -88,9 +88,11 @@ RESULTS_ROOT = WORK_DIR / "results"
 TARGETED_CONTROL_ROOT = WORK_DIR.parent / ".rethlas_verifier_control"
 
 CODEX_BIN = os.getenv("CODEX_BIN", "codex")
-CODEX_MODEL = os.getenv("CODEX_MODEL", "gpt-5.6-sol")
 CLAUDE_BIN = os.getenv("VERIFY_CLAUDE_BIN", "claude")
 VERIFIER_PROFILE = os.getenv("RETHLAS_MODEL_POLICY_PROFILE", "compatible")
+CODEX_MODEL = os.getenv(
+    "CODEX_MODEL", "gpt-6-astra" if VERIFIER_PROFILE == "max_diversity" else "gpt-5.6-sol"
+)
 CODEX_REASONING_EFFORT = os.getenv(
     "CODEX_REASONING_EFFORT",
     "max" if VERIFIER_PROFILE == "max_diversity" else "xhigh",

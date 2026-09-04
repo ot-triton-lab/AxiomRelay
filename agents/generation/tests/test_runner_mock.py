@@ -7194,6 +7194,39 @@ def test_legacy_binds_subagents_to_selected_root_model_and_effort(
     assert 'agents.default_subagent_reasoning_effort="high"' in configs
 
 
+def test_max_diversity_launches_astra_max_for_root_and_subagents(
+    tmp_path: Path,
+) -> None:
+    runner, fake_bin = _make_runner_tree(tmp_path)
+    calls_file = tmp_path / "codex-calls.jsonl"
+    environment = _mock_environment(
+        runner,
+        fake_bin,
+        mode="trusted",
+        extra_environment={
+            "AXIOM_RELAY_MODEL_POLICY_PROFILE": "max_diversity",
+            "MOCK_CODEX_CALLS_FILE": str(calls_file),
+        },
+    )
+    environment.pop("MODEL", None)
+    environment.pop("REASONING_EFFORT", None)
+    completed = subprocess.run(
+        [str(runner)], cwd=runner.parent.parent, env=environment,
+        text=True, capture_output=True, timeout=30, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
+    call = next(value for value in calls if "exec" in value)
+    assert call[call.index("-m") + 1] == "gpt-6-astra"
+    configs = [
+        call[index + 1] for index, value in enumerate(call[:-1])
+        if value == "--config"
+    ]
+    assert 'model_reasoning_effort="max"' in configs
+    assert 'agents.default_subagent_model="gpt-6-astra"' in configs
+    assert 'agents.default_subagent_reasoning_effort="max"' in configs
+
+
 def test_legacy_rejects_invalid_offline_draft_selection_before_codex(
     tmp_path: Path,
 ) -> None:

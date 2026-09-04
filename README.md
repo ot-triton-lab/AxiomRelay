@@ -115,14 +115,23 @@ proof or publish it.
 
 ### AxiomGraph bridge (experimental foundation)
 
-After an already-reconciled `rethlas-publication-v6` result, the host now makes
-a best-effort, additive AxiomGraph shadow projection. The projection preserves
-the publication receipt and ProofItem artifact digests, builds a target-rooted
-AND-OR witness, and writes a separate immutable sidecar. Failure of this shadow
-path cannot alter publication status, bytes, receipts, or API output.
-The hook is inactive unless the separately versioned `axiomgraph-contract`
-package is installed in the AxiomRelay runtime; sibling-repository test paths
-do not count as a production dependency installation.
+After an already-reconciled `rethlas-publication-v6` result, the host now emits
+a best-effort, immutable source event through a versioned, stdlib-only wire
+interface. The canonical interface manifest is
+`agents/generation/mcp/axiomgraph_source_interface_v1.json`. Each event binds
+the exact target and blueprint bytes, publication receipt, normalized
+ProofItem DAG, stable verifier profile, and the actual loaded Core/export
+runtime digests. Events are retained by publication receipt and event id under
+`agents/.claude_core/axiomgraph_exports/v1/publications`.
+
+AxiomRelay does not import AxiomGraph or project an AxiomGraph object. A
+separately versioned consumer reads this source protocol and may translate an
+event only after checking the interface major/minor, required capabilities,
+the exact AxiomGraph schema digest, and the runtime-source bindings. Internal
+Relay refactors can therefore retain compatibility by continuing to emit the
+same v1 semantics; a breaking semantic change requires a new interface major
+and event schema. Export failure cannot alter publication status, bytes,
+receipts, or API output, and a bounded local failure audit is retained.
 
 This is not yet the stopped-unsolved takeover trigger. Automatic transfer to a
 Danus controller remains disabled until AxiomRelay can authenticate one exact
@@ -178,11 +187,17 @@ general shell, write, browser, or subagent authority.
 | `compatible` | Sol `max` | Sol `xhigh` | Sol `xhigh` |
 | `balanced` | Sol `max` | Sol `xhigh` | Terra `max` |
 | `economy` | Terra `max` | Sol `xhigh` | Terra `max` |
-| `max_diversity` | Sol `max` | Sol `max` | Opus 5 1M `max` |
+| `max_diversity` | GPT-6 Astra `max` | GPT-6 Astra `max` | Opus 5 1M `max` |
 
 `max_diversity` requires authenticated OpenAI and Claude providers. Pass 2 is
 cold: it receives the authenticated proof context but not Pass 1's verdict,
 findings, or session state.
+
+For this profile, the OpenAI council seats also use `gpt-6-astra` at `max`.
+The `gpt-sol` and `opus-sol-council` entrypoint names remain compatible.
+Existing sessions keep their source/model bindings and require the normal
+source-drift takeover procedure after an upgrade. Astra has not yet had a
+paid end-to-end canary in this checkout.
 
 ## Quick start
 

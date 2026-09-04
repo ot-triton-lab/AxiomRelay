@@ -108,7 +108,11 @@ def test_max_diversity_resolves_when_cold_claude_verifier_is_attested(
     primary, adversarial = policy["verifier"]["passes"]
     assert primary["adapter"] == "codex_cli"
     assert primary["provider"] == "openai"
+    assert primary["model"] == "gpt-6-astra"
+    assert primary["launch_model"] == "gpt-6-astra"
     assert primary["effort"] == "max"
+    assert policy["generator"]["model"] == "gpt-6-astra"
+    assert policy["generator"]["effort"] == "max"
     assert adversarial["adapter"] == "claude_cli"
     assert adversarial["provider"] == "vertex"
     assert adversarial["model"] == "claude-opus-5"

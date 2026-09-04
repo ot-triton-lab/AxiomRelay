@@ -3202,8 +3202,8 @@ def test_verifier_profiles_resolve_exact_backends(
     assert backends["1"] == {
         "adapter": "codex_cli",
         "provider": "openai",
-        "model": "gpt-5.6-sol",
-        "launch_model": "gpt-5.6-sol",
+        "model": "gpt-6-astra" if profile == "max_diversity" else "gpt-5.6-sol",
+        "launch_model": "gpt-6-astra" if profile == "max_diversity" else "gpt-5.6-sol",
         "effort": "max" if profile == "max_diversity" else "xhigh",
     }
     assert backends["2"] == expected_adversarial

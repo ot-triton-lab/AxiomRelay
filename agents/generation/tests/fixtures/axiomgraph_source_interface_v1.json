@@ -1,0 +1,180 @@
+{
+  "event": {
+    "event_id": "arev_ac0393626479e4b62d32fcbf12d9bcb06d54b2c087c470d3ef15a3f5f9d7e3d4",
+    "exact_blueprint": {
+      "content_base64": "IyBsZW1tYSBsZW06YmFzZQoKPCEtLSByZXRobGFzLWRlcGVuZHMtb246IC0tPgojIyBzdGF0ZW1lbnQKUAoKIyMgcHJvb2YKQSB2ZXJpZmllZCBiYXNlIHByb29mLgoKIyB0aGVvcmVtIHRobTp0YXJnZXQKCjwhLS0gcmV0aGxhcy1kZXBlbmRzLW9uOiBsZW06YmFzZSAtLT4KIyMgc3RhdGVtZW50ClQKCiMjIHByb29mClRoZSB2ZXJpZmllZCBicmlkZ2UgZnJvbSBQLgo=",
+      "content_sha256": "79532257e640e22eb04ace3ae7e852acbbfd85a6b4067d46f837e1d7edcf15fb",
+      "encoding": "base64",
+      "media_type": "text/markdown"
+    },
+    "exact_target": {
+      "content_base64": "VAo=",
+      "content_sha256": "678f81a714fbc72030f82f9980054d5cf90e6f041a367f7da2f35b0f7dafb0e5",
+      "encoding": "base64",
+      "media_type": "text/markdown"
+    },
+    "interface": {
+      "axiomgraph_contract_version": "axiomgraph_contract_v1",
+      "axiomgraph_schema_bundle_digest": "sha256:3b188496f03ba208565ab5d8862e745be1cc58bcca2cbbdf084148e8e8e71d60",
+      "capability": "verified_publication_event_v1",
+      "interface_major": 1,
+      "interface_minor": 0,
+      "manifest_schema_version": "axiomrelay_axiomgraph_source_interface_v1"
+    },
+    "proof_manifest": {
+      "items": [
+        {
+          "artifact_sha256": "19489261cbf2e6aa4f59ab0fb92b5b30d984a8416c62785b10a1dd4a3c1ad183",
+          "dependency_mode": "explicit",
+          "depends_on": [],
+          "index": 0,
+          "item_id": "pi_19489261cbf2e6aa4f59ab0f",
+          "label": "lem:base",
+          "statement": "P",
+          "title": "lemma lem:base"
+        },
+        {
+          "artifact_sha256": "2edb759610396a9e420c5ea20256b6c52125ef5864aecd253bd6266881076f41",
+          "dependency_mode": "explicit",
+          "depends_on": [
+            "pi_19489261cbf2e6aa4f59ab0f"
+          ],
+          "index": 1,
+          "item_id": "pi_2edb759610396a9e420c5ea2",
+          "label": "thm:target",
+          "statement": "T",
+          "title": "theorem thm:target"
+        }
+      ],
+      "proof_digest": "79532257e640e22eb04ace3ae7e852acbbfd85a6b4067d46f837e1d7edcf15fb",
+      "schema_version": "axiomrelay_normalized_proof_manifest_v1",
+      "source_kind": "structured",
+      "topological_item_ids": [
+        "pi_19489261cbf2e6aa4f59ab0f",
+        "pi_2edb759610396a9e420c5ea2"
+      ]
+    },
+    "publication_receipt": {
+      "canonical_target_digest": "e632b7095b0bf32c260fa4c539e9fd7b852d0de454e9be26f24d0d6f91d069d3",
+      "checked_item_ids": [
+        "pi_19489261cbf2e6aa4f59ab0f",
+        "pi_2edb759610396a9e420c5ea2"
+      ],
+      "problem_id": "test/problem",
+      "proof_context": {
+        "schema_version": "rethlas_publication_proof_context_v3",
+        "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "proof_digest": "79532257e640e22eb04ace3ae7e852acbbfd85a6b4067d46f837e1d7edcf15fb",
+      "schema_version": "rethlas-publication-v6",
+      "state": "active",
+      "statement_source_digest": "678f81a714fbc72030f82f9980054d5cf90e6f041a367f7da2f35b0f7dafb0e5",
+      "verification_limits": {
+        "max_proof_items": 10
+      },
+      "verification_passes": [
+        {
+          "pass_index": 1,
+          "verdict": "correct",
+          "verification_role": "primary",
+          "verifier_model": "verifier-a",
+          "verifier_reasoning_effort": "high",
+          "verifier_service_version": "test-v1"
+        },
+        {
+          "pass_index": 2,
+          "verdict": "correct",
+          "verification_role": "adversarial_full_claim_audit",
+          "verifier_model": "verifier-b",
+          "verifier_reasoning_effort": "high",
+          "verifier_service_version": "test-v1"
+        }
+      ],
+      "verification_quorum": 2
+    },
+    "schema_version": "axiomrelay_verified_publication_event_v1",
+    "source": {
+      "authority_id": "rethlas-publication-v6",
+      "blueprint_sha256": "79532257e640e22eb04ace3ae7e852acbbfd85a6b4067d46f837e1d7edcf15fb",
+      "canonical_target_sha256": "e632b7095b0bf32c260fa4c539e9fd7b852d0de454e9be26f24d0d6f91d069d3",
+      "problem_id": "test/problem",
+      "publication_receipt_sha256": "d806e7989ba5720f327fea92bba461fab959f469580e4e21a21a3f2b9fca304f",
+      "statement_sha256": "678f81a714fbc72030f82f9980054d5cf90e6f041a367f7da2f35b0f7dafb0e5",
+      "terminal_outcome": "published_verified"
+    },
+    "source_runtime": {
+      "interface_manifest_sha256": "6f27dc08406a02f1e3997effab0e8d7ca801e6db5f1d923bd976f38dad4bd072",
+      "loaded_claude_core_sha256": "cf4ab0ce1e41b946a85156885240d543418bf6b6f0d4b7e041cf312b86662ad8",
+      "publication_export_module_sha256": "657d14147e1e3ed040cc503d1cd78e6c763c379a0d8bc8af11fed5b4723235e2",
+      "runtime_dependency_manifest_sha256": "e3b09a84e1926ba381260722ea255ed82f60d606f3c3ed48487f4ffcc5704780"
+    },
+    "stable_verifier_profile": {
+      "proof_context": {
+        "schema_version": "rethlas_publication_proof_context_v3",
+        "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "verification_limits": {
+        "max_proof_items": 10
+      },
+      "verification_passes": [
+        {
+          "pass_index": 1,
+          "verification_role": "primary",
+          "verifier_model": "verifier-a",
+          "verifier_reasoning_effort": "high",
+          "verifier_service_version": "test-v1"
+        },
+        {
+          "pass_index": 2,
+          "verification_role": "adversarial_full_claim_audit",
+          "verifier_model": "verifier-b",
+          "verifier_reasoning_effort": "high",
+          "verifier_service_version": "test-v1"
+        }
+      ],
+      "verification_quorum": 2
+    }
+  },
+  "event_sha256": "8cd809678075a9701f4386a14e9705cf435c90cc458fe2bb810c0ba1b021313b",
+  "interface_manifest": {
+    "axiomgraph_contract_version": "axiomgraph_contract_v1",
+    "axiomgraph_schema_bundle_digest": "sha256:3b188496f03ba208565ab5d8862e745be1cc58bcca2cbbdf084148e8e8e71d60",
+    "event_schema": "axiomrelay_verified_publication_event_v1",
+    "event_store_relative_path": "agents/.claude_core/axiomgraph_exports/v1/publications",
+    "export_module_relative_path": "agents/generation/mcp/publication_export_v1.py",
+    "interface_major": 1,
+    "interface_manifest_relative_path": "agents/generation/mcp/axiomgraph_source_interface_v1.json",
+    "interface_minor": 0,
+    "minimum_consumer_minor": 0,
+    "optional_capabilities": [],
+    "required_capabilities": [
+      "verified_publication_event_v1"
+    ],
+    "runtime_dependency_files": [
+      "agents/generation/CLAUDE.md",
+      "agents/generation/.mcp.json",
+      "agents/generation/mcp/legacy_server.py",
+      "agents/generation/mcp/legacy_verification_client.py",
+      "agents/generation/mcp/proof_context.py",
+      "agents/generation/mcp/publication_proof_context_v3.py",
+      "agents/generation/mcp/publication_export_v1.py",
+      "agents/generation/mcp/axiomgraph_source_interface_v1.json"
+    ],
+    "schema_version": "axiomrelay_axiomgraph_source_interface_v1"
+  },
+  "runtime_dependency_manifest": {
+    "files": {
+      ".mcp.json": "b69488ba8934f965cc58e3f02907d8e9b1129bf3558637655ddfd8e1eba3c177",
+      "CLAUDE.md": "29652e46be151291cf60c5f0ec33be4d5f231393f3615545b34b530398ea4911",
+      "mcp/axiomgraph_source_interface_v1.json": "6f27dc08406a02f1e3997effab0e8d7ca801e6db5f1d923bd976f38dad4bd072",
+      "mcp/legacy_server.py": "3601b1409986e9d8a916bf984d4aae8b89b7237d81e92ab39d5bf5eb7966eaa5",
+      "mcp/legacy_verification_client.py": "a84cc93af6c538e665078f277417223d96ea54d1cd5b64e533dc576ba40517b7",
+      "mcp/proof_context.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166",
+      "mcp/publication_export_v1.py": "657d14147e1e3ed040cc503d1cd78e6c763c379a0d8bc8af11fed5b4723235e2",
+      "mcp/publication_proof_context_v3.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166"
+    },
+    "schema_version": "rethlas_claude_runtime_dependencies_v1"
+  },
+  "runtime_dependency_manifest_sha256": "e3b09a84e1926ba381260722ea255ed82f60d606f3c3ed48487f4ffcc5704780",
+  "schema": "axiomrelay_source_interface_corpus_v1"
+}

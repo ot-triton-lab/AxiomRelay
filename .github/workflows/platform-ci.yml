@@ -192,10 +192,15 @@ jobs:
             agents/.generation-venv/bin/python -m pytest -q \
             agents/generation/tests/test_verification_client.py &
           verification_client_pid=$!
+          run_test publication-export \
+            agents/.generation-venv/bin/python -m pytest -q \
+            agents/generation/tests/test_publication_export_v1.py &
+          publication_export_pid=$!
           failures=0
           for test_pid in \
             "$verification_api_pid" \
-            "$verification_client_pid"; do
+            "$verification_client_pid" \
+            "$publication_export_pid"; do
             if ! wait "$test_pid"; then
               failures=1
             fi

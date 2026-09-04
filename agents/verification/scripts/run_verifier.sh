@@ -426,10 +426,15 @@ if [[ "$PROFILE" == max_diversity ]]; then
   echo "Claude verifier auth mode/method: ${VERIFY_CLAUDE_AUTH_MODE}/${VERIFY_CLAUDE_AUTH_METHOD}"
 fi
 primary_default_effort="${CODEX_REASONING_EFFORT:-xhigh}"
+primary_default_model="gpt-5.6-sol"
+if [[ "$PROFILE" == max_diversity ]]; then
+  primary_default_model="gpt-6-astra"
+fi
+primary_default_model="${CODEX_MODEL:-$primary_default_model}"
 if [[ "$PROFILE" == max_diversity && -z "${CODEX_REASONING_EFFORT:-}" ]]; then
   primary_default_effort="max"
 fi
-echo "Primary verifier: ${VERIFY_PRIMARY_MODEL:-gpt-5.6-sol}/${VERIFY_PRIMARY_REASONING_EFFORT:-$primary_default_effort}"
+echo "Primary verifier: ${VERIFY_PRIMARY_MODEL:-$primary_default_model}/${VERIFY_PRIMARY_REASONING_EFFORT:-$primary_default_effort}"
 echo "Verifier request timeout: ${VERIFY_REQUEST_TIMEOUT_SECONDS}s"
 echo "Claude process/API timeout: ${VERIFY_CLAUDE_TIMEOUT_SECONDS}s/${API_TIMEOUT_MS}ms"
 echo "Claude stream-idle timeout/internal retries/max turns: ${CLAUDE_STREAM_IDLE_TIMEOUT_MS}ms/${CLAUDE_CODE_MAX_RETRIES}/${CLAUDE_CODE_MAX_TURNS}"

@@ -54,10 +54,14 @@ if [[ -z "$PROBLEM_FILE" ]]; then
   echo "PROBLEM_FILE is required (for example data/my_problem.md)." >&2
   exit 1
 fi
-MODEL="${MODEL:-gpt-5.6-sol}"
+MODEL_POLICY_PROFILE="${RETHLAS_MODEL_POLICY_PROFILE:-compatible}"
+generator_default_model="gpt-5.6-sol"
+if [[ "$MODEL_POLICY_PROFILE" == max_diversity ]]; then
+  generator_default_model="gpt-6-astra"
+fi
+MODEL="${MODEL:-$generator_default_model}"
 REASONING_EFFORT="${REASONING_EFFORT:-max}"
 MAIN_AGENT_SELECTION="${RETHLAS_MAIN_AGENT:-gpt-sol}"
-MODEL_POLICY_PROFILE="${RETHLAS_MODEL_POLICY_PROFILE:-compatible}"
 EXTERNAL_PLAN_SET_SELECTION="${RETHLAS_EXTERNAL_PLAN_SET:-}"
 EXTERNAL_PLAN_SHA256="${RETHLAS_EXTERNAL_PLAN_SHA256:-}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-10}"

@@ -207,7 +207,7 @@ through the problem-specific paths described above.
   "initial_external_retrieval_calls": 0,
   "collaboration_spawns_before_route_checkpoint": 0,
   "host_route_council_mode": "opus_sol_council_v2",
-  "host_route_council_model": "gpt-5.6-sol",
+  "host_route_council_model": "gpt-6-astra",
   "host_route_council_reasoning_effort": "max",
   "host_route_council_retrieval_capability": "statement_bound_matlas_arxiv_only_v1",
   "host_route_council_retrieval_tools": [

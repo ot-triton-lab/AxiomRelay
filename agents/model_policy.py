@@ -59,11 +59,14 @@ class Capability:
 
 _CODEX_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
 _LUNA_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+_ASTRA_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+MAX_DIVERSITY_CODEX_MODEL = "gpt-6-astra"
 
 
 def _capabilities() -> tuple[Capability, ...]:
     values: list[Capability] = []
     for model, efforts in (
+        (MAX_DIVERSITY_CODEX_MODEL, _ASTRA_EFFORTS),
         ("gpt-5.6-sol", _CODEX_EFFORTS),
         ("gpt-5.6-terra", _CODEX_EFFORTS),
         ("gpt-5.6-luna", _LUNA_EFFORTS),
@@ -554,13 +557,13 @@ def resolve_profile(
             "profile": profile,
             "root": root,
             "generator": _codex_actor(
-                model="gpt-5.6-sol", effort="max", role="generator"
+                model=MAX_DIVERSITY_CODEX_MODEL, effort="max", role="generator"
             ),
             "verifier": {
                 "quorum": 2,
                 "passes": [
                     _codex_actor(
-                        model="gpt-5.6-sol",
+                        model=MAX_DIVERSITY_CODEX_MODEL,
                         effort="max",
                         role="verifier",
                         pass_index=1,
