@@ -133,6 +133,13 @@ same v1 semantics; a breaking semantic change requires a new interface major
 and event schema. Export failure cannot alter publication status, bytes,
 receipts, or API output, and a bounded local failure audit is retained.
 
+The v1 wire bounds JSON nesting at 256 and the exact target at 4 MiB. The
+NFC/LF-normalized JSON object containing `problem_id` and `proof_context` is
+limited to 4 MiB minus 4096 bytes for fixed projection metadata. Stable-profile
+keys must remain distinct after normalization, and each proof item id binds
+the first 24 hexadecimal characters of its artifact SHA-256. The exporter and
+consumer enforce the same bounds before an event can become a projection.
+
 This is not yet the stopped-unsolved takeover trigger. Automatic transfer to a
 Danus controller remains disabled until AxiomRelay can authenticate one exact
 terminal cohort, source state, absence of owner/Pro waits, and the lease/fence

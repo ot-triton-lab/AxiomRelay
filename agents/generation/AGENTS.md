@@ -270,7 +270,8 @@ interceptor or trusted reasoning clock. Do not delay a ready three-route fanout
 merely to consume that duration.
 
 When the host announces `orchestration_mode=opus_sol_council_v2`, one
-host-owned GPT-5.6 Sol/max council seat is the only pre-checkpoint exception.
+host-owned GPT-6 Astra/max council seat (legacy transport name `Sol`) is the
+only pre-checkpoint exception.
 If and only if the SHA-bound statement permits Matlas/arXiv retrieval, that
 seat receives exactly `search_matlas_theorems`, `search_arxiv_theorems`, and
 `read_arxiv_primary`: at most two searches and four primary reads per phase,

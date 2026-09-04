@@ -411,7 +411,7 @@ RUNTIME_DEPENDENCY_SHA256 = {
     "mcp/legacy_verification_client.py": "a84cc93af6c538e665078f277417223d96ea54d1cd5b64e533dc576ba40517b7",
     "mcp/proof_context.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166",
     "mcp/publication_proof_context_v3.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166",
-    "mcp/publication_export_v1.py": "657d14147e1e3ed040cc503d1cd78e6c763c379a0d8bc8af11fed5b4723235e2",
+    "mcp/publication_export_v1.py": "f1ef0cd0ed2c91a69ab48a53e804d6834f8ae02f94c3f4952310441603c487c5",
     "mcp/axiomgraph_source_interface_v1.json": "6f27dc08406a02f1e3997effab0e8d7ca801e6db5f1d923bd976f38dad4bd072",
 }
 PROOF_CONTEXT_SOURCE = (

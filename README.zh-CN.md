@@ -111,6 +111,11 @@ AxiomRelay 不再 import AxiomGraph，也不在内部构造 AxiomGraph 对象。
 event schema。export 失败不会改变原 publication 状态、字节、receipt 或 API 返回值，
 同时会留下有界的本地失败审计。
 
+v1 wire 的 JSON 嵌套上限为 256，原题上限为 4 MiB。经过 NFC/LF 规范化的
+`problem_id` 与 `proof_context` JSON 对象上限为 4 MiB 减 4096 字节，预留空间用于
+固定的投影元数据。稳定 profile 的 key 规范化后不得碰撞，每个 proof item id 必须
+绑定 artifact SHA-256 的前 24 位。exporter 与 consumer 在投影前执行相同的边界校验。
+
 这还不是 `stopped_unsolved` 的自动接管触发器。只有当 AxiomRelay 能认证同一个终局
 cohort、source state、没有未完成的 owner/Pro wait，并完成 lease/fence CAS 后，才会
 开放向 Danus controller 的自动转移。一次有界的 `stop_unsolved` 只说明 fast path

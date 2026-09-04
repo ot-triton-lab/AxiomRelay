@@ -151,6 +151,16 @@ def _event() -> tuple[dict[str, object], dict[str, object]]:
     return event, manifest
 
 
+def _reidentify(event: dict[str, object]) -> None:
+    event["source"]["publication_receipt_sha256"] = _sha256(
+        export.canonical_bytes(event["publication_receipt"]) + b"\n"
+    )
+    payload = {key: value for key, value in event.items() if key != "event_id"}
+    event["event_id"] = "arev_" + _sha256(
+        export.EVENT_ID_DOMAIN + export.canonical_bytes(payload)
+    )
+
+
 def test_interface_manifest_is_canonical_and_minor_compatible() -> None:
     raw = MANIFEST_PATH.read_bytes()
     manifest = export.load_interface_manifest(raw)
@@ -358,6 +368,84 @@ def test_event_rejects_ambiguous_proof_item_field_types(field: str, value: objec
             event, interface_manifest=manifest,
             expected_source_runtime=event["source_runtime"],
         )
+
+
+@pytest.mark.parametrize("field,value", [("interface_major", True), ("interface_minor", False)])
+def test_event_rejects_boolean_interface_versions(field: str, value: bool) -> None:
+    event, manifest = _event()
+    event["interface"][field] = value
+    _reidentify(event)
+    with pytest.raises(export.PublicationExportError, match="event interface"):
+        export.validate_verified_publication_event(event, interface_manifest=manifest)
+
+
+def test_event_binds_proof_item_ids_to_artifact_digests() -> None:
+    event, manifest = _event()
+    event["proof_manifest"]["items"][1]["artifact_sha256"] = (
+        event["proof_manifest"]["items"][0]["artifact_sha256"]
+    )
+    _reidentify(event)
+    with pytest.raises(export.PublicationExportError, match="proof manifest item binding"):
+        export.validate_verified_publication_event(event, interface_manifest=manifest)
+
+
+@pytest.mark.parametrize("excess", [0, 1])
+def test_exact_target_projection_size_boundary(excess: int) -> None:
+    event, manifest = _event()
+    raw = b"T\n" + b" " * (export.MAX_EXACT_TARGET_BYTES_V1 - 2 + excess)
+    digest = _sha256(raw)
+    event["exact_target"]["content_base64"] = base64.b64encode(raw).decode("ascii")
+    event["exact_target"]["content_sha256"] = digest
+    event["source"]["statement_sha256"] = digest
+    event["publication_receipt"]["statement_source_digest"] = digest
+    _reidentify(event)
+    if excess:
+        with pytest.raises(export.PublicationExportError, match="exact target.*size bound"):
+            export.validate_verified_publication_event(event, interface_manifest=manifest)
+    else:
+        export.validate_verified_publication_event(event, interface_manifest=manifest)
+
+
+@pytest.mark.parametrize("field", ["problem_id", "proof_context"])
+@pytest.mark.parametrize("excess", [0, 1])
+def test_source_context_projection_size_boundary(field: str, excess: int) -> None:
+    event, manifest = _event()
+    context = {"problem_id": "test/problem", "proof_context": {"padding": ""}}
+    context[field] = ""
+    padding_size = (
+        export.MAX_PROJECTION_CONTEXT_BYTES_V1
+        - len(export.canonical_bytes(context))
+        + excess
+    )
+    context[field] = "x" * padding_size
+    event["source"]["problem_id"] = context["problem_id"]
+    event["publication_receipt"].update(context)
+    event["stable_verifier_profile"]["proof_context"] = context["proof_context"]
+    _reidentify(event)
+    if excess:
+        with pytest.raises(export.PublicationExportError, match="source context.*size bound"):
+            export.validate_verified_publication_event(event, interface_manifest=manifest)
+    else:
+        export.validate_verified_publication_event(event, interface_manifest=manifest)
+
+
+def test_source_profile_rejects_keys_that_collide_after_normalization() -> None:
+    event, manifest = _event()
+    context = {"\u00e9": "a", "e\u0301": "b"}
+    event["publication_receipt"]["proof_context"] = context
+    event["stable_verifier_profile"]["proof_context"] = context
+    _reidentify(event)
+    with pytest.raises(export.PublicationExportError, match="keys collide"):
+        export.validate_verified_publication_event(event, interface_manifest=manifest)
+
+
+def test_wire_nesting_limit() -> None:
+    value: object = None
+    for _ in range(256):
+        value = [value]
+    assert export.canonical_bytes(value)
+    with pytest.raises(export.PublicationExportError, match="nesting limit"):
+        export.canonical_bytes([value])
 
 
 def test_event_binds_final_proof_statement_to_canonical_target() -> None:

@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import stat
+import unicodedata
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,10 @@ SHA256_RE = re.compile(r"[0-9a-f]{64}")
 AXIOMGRAPH_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 PROOF_ITEM_ID_RE = re.compile(r"pi_[0-9a-f]{24}")
 MAX_EVENT_BYTES = 192_000_000
+MAX_EXACT_TARGET_BYTES_V1 = 4 * 1024 * 1024
+# Leave room for the fixed-size activation, event, and runtime digest fields in
+# AxiomGraph's 4 MiB source-context blob. Both sides enforce this v1 wire bound.
+MAX_PROJECTION_CONTEXT_BYTES_V1 = MAX_EXACT_TARGET_BYTES_V1 - 4096
 
 MANIFEST_KEYS = frozenset(
     {
@@ -204,6 +209,30 @@ def _require_text(value: Any, label: str, *, allow_empty: bool = False) -> str:
     return value
 
 
+def _projection_json_value(value: Any) -> Any:
+    """Check the NFC/LF projection language without importing AxiomGraph."""
+
+    if value is None or type(value) in (bool, int):
+        return value
+    if type(value) is str:
+        return unicodedata.normalize(
+            "NFC", value.replace("\r\n", "\n").replace("\r", "\n")
+        )
+    if type(value) is list:
+        return [_projection_json_value(item) for item in value]
+    if type(value) is dict:
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = _projection_json_value(key)
+            if normalized_key in result:
+                raise PublicationExportError(
+                    "source JSON keys collide under AxiomGraph normalization"
+                )
+            result[normalized_key] = _projection_json_value(item)
+        return result
+    raise PublicationExportError("source JSON value cannot enter AxiomGraph records")
+
+
 def validate_interface_manifest(value: Any) -> dict[str, Any]:
     manifest = dict(_exact_object(value, MANIFEST_KEYS, "interface manifest"))
     if (
@@ -305,6 +334,7 @@ def _validate_proof_manifest(
             or item_id in dependencies
             or not isinstance(item["artifact_sha256"], str)
             or SHA256_RE.fullmatch(item["artifact_sha256"]) is None
+            or item_id != "pi_" + item["artifact_sha256"][:24]
             or item["dependency_mode"]
             not in {"explicit", "conservative-prefix", "synthetic"}
             or not isinstance(item["depends_on"], list)
@@ -408,7 +438,11 @@ def validate_verified_publication_event(
             "axiomgraph_schema_bundle_digest"
         ],
     }
-    if dict(interface) != expected_interface:
+    if (
+        type(interface["interface_major"]) is not int
+        or type(interface["interface_minor"]) is not int
+        or dict(interface) != expected_interface
+    ):
         raise PublicationExportError("publication event interface mismatch")
 
     source = _exact_object(event["source"], SOURCE_KEYS, "event source")
@@ -428,6 +462,8 @@ def validate_verified_publication_event(
 
     target_raw = _decode_blob(event["exact_target"], "exact target")
     blueprint_raw = _decode_blob(event["exact_blueprint"], "exact blueprint")
+    if len(target_raw) > MAX_EXACT_TARGET_BYTES_V1:
+        raise PublicationExportError("exact target exceeds the v1 projection size bound")
     if (
         sha256_bytes(target_raw) != source["statement_sha256"]
         or sha256_bytes(blueprint_raw) != source["blueprint_sha256"]
@@ -456,7 +492,14 @@ def validate_verified_publication_event(
         canonical_target_sha256=source["canonical_target_sha256"],
         receipt=receipt,
     )
-    _validate_verifier_profile(event["stable_verifier_profile"], receipt=receipt)
+    profile = _validate_verifier_profile(event["stable_verifier_profile"], receipt=receipt)
+    projected_profile = _projection_json_value(profile)
+    projection_context = {
+        "problem_id": _projection_json_value(source["problem_id"]),
+        "proof_context": projected_profile["proof_context"],
+    }
+    if len(canonical_bytes(projection_context)) > MAX_PROJECTION_CONTEXT_BYTES_V1:
+        raise PublicationExportError("source context exceeds the v1 projection size bound")
 
     runtime = dict(_exact_object(event["source_runtime"], SOURCE_RUNTIME_KEYS, "source runtime"))
     for field, digest in runtime.items():
