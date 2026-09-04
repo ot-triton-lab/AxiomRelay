@@ -63,6 +63,16 @@ gmpy2 in addition to the reasoning MCP dependencies. Use it for numerical
 experiments, symbolic checks, and exact arithmetic when useful, but treat
 computational evidence as evidence rather than a proof.
 
+GPT-Sol proof lanes receive that runtime through their restricted shell. A
+persistent Claude root has no shell, but may call the host-owned
+`run_math_experiment` tool before freezing its route slate or for one concrete
+local repair test. The tool runs only inline Python in an empty Codex sandbox,
+denies the repository and user home, disables network access, caps code,
+runtime, and output, and saves a private write-once receipt. It never grants
+workspace access and its result is `unverified_computational_diagnostic`, not a
+proof step, route checkpoint, admission receipt, or publication authority.
+The isolated Sol council seat still has no Python or shell.
+
 ## Human hot-join turns
 
 When the runner enables its owner hot-join adapter, a later user turn may arrive
@@ -238,6 +248,16 @@ through the problem-specific paths described above.
   "root_is_canonical_memory_writer": true,
   "initial_memory_init_calls": 0,
   "initial_memory_search_calls_for_continuation": 1,
+  "root_math_experiment_tool": "run_math_experiment",
+  "root_math_experiment_max_calls_per_root": 12,
+  "root_math_experiment_max_code_bytes": 32768,
+  "root_math_experiment_max_timeout_seconds": 60,
+  "root_math_experiment_max_stdout_bytes": 65536,
+  "root_math_experiment_max_stderr_bytes": 16384,
+  "root_math_experiment_network": false,
+  "root_math_experiment_repository_access": false,
+  "root_math_experiment_persistence": "private_write_once_receipt",
+  "root_math_experiment_evidence_class": "unverified_computational_diagnostic",
   "persistence_mode": "write_behind_phase_checkpoint",
   "checkpoint_tool": "memory_append_batch",
   "max_checkpoint_records": 32,
@@ -264,7 +284,12 @@ Start every fresh root run with one protected route-design phase. Read the
 problem, local references, and at most one bounded memory search when
 continuing an existing run. During this phase, do not initialize or write
 memory, use external retrieval, spawn a sub-agent, or update branch state.
-Necessary local symbolic, numeric, or exact computation is allowed. The runner
+Necessary local symbolic, numeric, or exact computation is allowed. A Claude
+root performs it only through `run_math_experiment`; use a stable `exp_...` id
+and a precise purpose, and call it only when its result can discriminate among
+routes or falsify a concrete step. Cite the returned request/result digests in
+the route rationale when the computation changes a route. Never present its
+output as proof, and do not rerun a write-once id with changed code. The runner
 supplies a soft deep-work target because the host does not expose a sampling
 interceptor or trusted reasoning clock. Do not delay a ready three-route fanout
 merely to consume that duration.

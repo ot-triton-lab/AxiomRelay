@@ -92,7 +92,7 @@ CLAUDE_RESPONSE_SEGMENT_TOKENS="48000"
 CLAUDE_MAX_OUTPUT_TOKENS="${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-$CLAUDE_RESPONSE_SEGMENT_TOKENS}"
 CLAUDE_VERTEX_THINKING_BODY='{"thinking":{"type":"adaptive","display":"summarized"}}'
 MCP_APPROVAL_SETTINGS='{"enabledMcpjsonServers":["rethlas-root"]}'
-CLAUDE_ALLOWED_TOOLS='Read,mcp__rethlas-root__memory_search,mcp__rethlas-root__memory_append_batch,mcp__rethlas-root__search_matlas_theorems,mcp__rethlas-root__search_arxiv_theorems,mcp__rethlas-root__read_arxiv_primary,mcp__rethlas-root__prepare_pro_gap_query,mcp__rethlas-root__get_pro_gap_query,mcp__rethlas-root__ingest_pro_gap_response,mcp__rethlas-root__get_pro_gap_response,mcp__rethlas-root__run_three_route_cohort,mcp__rethlas-root__edit_blueprint,mcp__rethlas-root__write_blueprint,mcp__rethlas-root__verify_blueprint_service'
+CLAUDE_ALLOWED_TOOLS='Read,mcp__rethlas-root__memory_search,mcp__rethlas-root__memory_append_batch,mcp__rethlas-root__search_matlas_theorems,mcp__rethlas-root__search_arxiv_theorems,mcp__rethlas-root__read_arxiv_primary,mcp__rethlas-root__run_math_experiment,mcp__rethlas-root__prepare_pro_gap_query,mcp__rethlas-root__get_pro_gap_query,mcp__rethlas-root__ingest_pro_gap_response,mcp__rethlas-root__get_pro_gap_response,mcp__rethlas-root__run_three_route_cohort,mcp__rethlas-root__edit_blueprint,mcp__rethlas-root__write_blueprint,mcp__rethlas-root__verify_blueprint_service'
 if [[ -n "${VERIFY_READY_URL:-}" ]]; then
   verify_base_url="${VERIFY_READY_URL%/ready}"
 elif [[ -n "${VERIFY_HEALTH_URL:-}" ]]; then

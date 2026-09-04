@@ -338,6 +338,11 @@ PRO_GAP_RESPONSE_BINDING_SCHEMA = "axiom_relay_pro_gap_response_binding_v2"
 PRO_GAP_RESPONSE_RECEIPT_SCHEMA = "axiom_relay_pro_gap_response_receipt_v2"
 PRIVATE_PRO_GAP_QUERY_DIRECTORY = "pro_gap_queries"
 PRIVATE_PRO_GAP_RESPONSE_DIRECTORY = "pro_gap_responses"
+MATH_EXPERIMENT_ID_RE = re.compile(r"^exp_[a-z0-9][a-z0-9_]{0,58}$")
+MATH_EXPERIMENT_REQUEST_SCHEMA = "axiom_relay_math_experiment_request_v1"
+MATH_EXPERIMENT_RESULT_SCHEMA = "axiom_relay_math_experiment_result_v1"
+MATH_EXPERIMENT_RECEIPT_SCHEMA = "axiom_relay_math_experiment_receipt_v1"
+PRIVATE_MATH_EXPERIMENT_DIRECTORY = "math_experiments"
 MAX_PRO_GAP_QUERY_BYTES = 131_072
 MAX_PRO_GAP_RESPONSE_BYTES = 131_072
 MAX_PRO_GAP_COPY_PROMPT_BYTES = 65_536
@@ -349,6 +354,14 @@ MAX_PRO_GAP_TARGET_CLAIM_CHARS = 480
 MAX_PRO_GAP_CONTEXT_ITEMS = 12
 MAX_PRO_GAP_CONTEXT_ITEM_CHARS = 2_000
 MAX_PRO_GAP_QUESTION_CHARS = 4_000
+MAX_MATH_EXPERIMENT_CODE_BYTES = 32_768
+MAX_MATH_EXPERIMENT_PURPOSE_BYTES = 1_024
+MAX_MATH_EXPERIMENT_STDOUT_BYTES = 65_536
+MAX_MATH_EXPERIMENT_STDERR_BYTES = 16_384
+MAX_MATH_EXPERIMENT_RESULT_BYTES = 524_288
+MAX_MATH_EXPERIMENTS_PER_ROOT = 12
+MAX_MATH_EXPERIMENT_TOTAL_BYTES = 8_388_608
+MAX_MATH_EXPERIMENT_TIMEOUT_SECONDS = 60
 PRO_GAP_SETTLED_RECORD_CHANNELS = frozenset(
     {"immediate_conclusions", "proof_steps", "big_decisions"}
 )
@@ -405,7 +418,7 @@ PUBLICATION_TARGET_PRECONDITION_FIELDS = {
 }
 RUNTIME_DEPENDENCY_MANIFEST_SCHEMA = "rethlas_claude_runtime_dependencies_v1"
 RUNTIME_DEPENDENCY_SHA256 = {
-    "CLAUDE.md": "29652e46be151291cf60c5f0ec33be4d5f231393f3615545b34b530398ea4911",
+    "CLAUDE.md": "07325c062b9362d0cd603a1a9d89bf46b8d336c255017b0f6735a00f298372da",
     ".mcp.json": "b69488ba8934f965cc58e3f02907d8e9b1129bf3558637655ddfd8e1eba3c177",
     "mcp/legacy_server.py": "3601b1409986e9d8a916bf984d4aae8b89b7237d81e92ab39d5bf5eb7966eaa5",
     "mcp/legacy_verification_client.py": "a84cc93af6c538e665078f277417223d96ea54d1cd5b64e533dc576ba40517b7",
@@ -3976,6 +3989,587 @@ def get_pro_gap_response(
     if response["response_sha256"] != expected_response_sha256:
         raise ClaudeCoreError("Pro gap response CAS digest mismatch")
     return response
+
+
+def _math_experiment_id(value: object) -> str:
+    experiment_id = _bounded_text(
+        value, label="math experiment id", maximum=64
+    )
+    if MATH_EXPERIMENT_ID_RE.fullmatch(experiment_id) is None:
+        raise ClaudeCoreError(
+            "math experiment id must start with exp_ and contain only "
+            "lowercase letters, digits, and underscores"
+        )
+    return experiment_id
+
+
+def _math_experiment_usage(directory: Path) -> tuple[int, int]:
+    count = 0
+    total = 0
+    allowed_suffixes = (".request.json", ".result.json")
+    for artifact in directory.iterdir():
+        if artifact.name == ".math-experiment.lock":
+            continue
+        if not artifact.name.endswith(allowed_suffixes):
+            raise ClaudeCoreError(
+                "math experiment directory contains an unsafe artifact"
+            )
+        metadata = artifact.lstat()
+        if (
+            artifact.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or (hasattr(os, "getuid") and metadata.st_uid != os.getuid())
+        ):
+            raise ClaudeCoreError("math experiment artifact is unsafe")
+        if artifact.name.endswith(".request.json"):
+            count += 1
+        total += int(metadata.st_size)
+    return count, total
+
+
+def _math_sandbox_filesystem_toml(
+    *, sandbox_root: Path, codex_bin: Path
+) -> str:
+    repository_root = AGENTS_ROOT.parent.resolve(strict=True)
+    home_root = Path.home().resolve(strict=True)
+    resolved_codex = codex_bin.resolve(strict=True)
+    if resolved_codex.is_relative_to(repository_root):
+        raise ClaudeCoreError(
+            "math sandbox Codex executable must be outside the repository"
+        )
+    runtime_roots = {
+        Path(sys.prefix).resolve(strict=True),
+        Path(sys.base_prefix).resolve(strict=True),
+        PYTHON_BIN.resolve(strict=True),
+        resolved_codex,
+        resolved_codex.parent,
+    }
+    if any(path == Path("/") for path in runtime_roots):
+        raise ClaudeCoreError("math runtime resolved to an unsafe broad root")
+    entries: dict[str, str] = {
+        ":minimal": "read",
+        str(home_root): "deny",
+        str(repository_root): "deny",
+    }
+    for path in sorted(runtime_roots, key=lambda item: (len(str(item)), str(item))):
+        entries[str(path)] = "read"
+    entries[str(sandbox_root.resolve(strict=True))] = "write"
+    return "{" + ",".join(
+        json.dumps(path) + "=" + json.dumps(mode)
+        for path, mode in entries.items()
+    ) + "}"
+
+
+def _communicate_math_experiment_bounded(
+    process: subprocess.Popen[bytes], *, timeout_seconds: int
+) -> tuple[bytes, bytes, bool, bool, bool]:
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    limits = {
+        "stdout": MAX_MATH_EXPERIMENT_STDOUT_BYTES,
+        "stderr": MAX_MATH_EXPERIMENT_STDERR_BYTES,
+    }
+    exceeded = {"stdout": False, "stderr": False}
+
+    def drain(name: str, stream: Any) -> None:
+        try:
+            while True:
+                chunk = stream.read(16_384)
+                if not chunk:
+                    return
+                remaining = limits[name] + 1 - len(buffers[name])
+                if remaining > 0:
+                    buffers[name].extend(chunk[:remaining])
+                if len(buffers[name]) > limits[name]:
+                    exceeded[name] = True
+                    return
+        finally:
+            with suppress(BaseException):
+                stream.close()
+
+    assert process.stdout is not None and process.stderr is not None
+    readers = [
+        threading.Thread(
+            target=drain, args=("stdout", process.stdout), daemon=True
+        ),
+        threading.Thread(
+            target=drain, args=("stderr", process.stderr), daemon=True
+        ),
+    ]
+    for reader in readers:
+        reader.start()
+    deadline = time.monotonic() + timeout_seconds
+    timed_out = False
+    while process.poll() is None:
+        if exceeded["stdout"] or exceeded["stderr"]:
+            break
+        if time.monotonic() >= deadline:
+            timed_out = True
+            break
+        time.sleep(0.02)
+    if process.poll() is None:
+        _kill_group(process)
+    elif _process_group_has_non_zombie_members(process.pid):
+        _terminate_orphan_process_group(process.pid)
+    for reader in readers:
+        reader.join(timeout=5)
+    if any(reader.is_alive() for reader in readers):
+        raise ClaudeCoreError("math experiment output did not drain")
+    if process.returncode is None:
+        raise ClaudeCoreError("math experiment process did not settle")
+    return (
+        bytes(buffers["stdout"][: limits["stdout"]]),
+        bytes(buffers["stderr"][: limits["stderr"]]),
+        exceeded["stdout"],
+        exceeded["stderr"],
+        timed_out,
+    )
+
+
+def _math_output_text(value: bytes) -> tuple[str, bool]:
+    try:
+        return value.decode("utf-8"), True
+    except UnicodeDecodeError:
+        return value.decode("utf-8", errors="replace"), False
+
+
+def _validate_math_experiment_result(
+    value: object,
+    *,
+    request: Mapping[str, Any],
+    request_sha256: str,
+) -> dict[str, Any]:
+    expected_keys = {
+        "schema_version",
+        "problem_id",
+        "statement_sha256",
+        "root_session_id",
+        "experiment_id",
+        "purpose",
+        "request_sha256",
+        "code_sha256",
+        "python_runtime_sha256",
+        "codex_sandbox_sha256",
+        "sandbox_profile",
+        "network_access",
+        "repository_access",
+        "timeout_seconds",
+        "execution_status",
+        "returncode",
+        "duration_ms",
+        "stdout",
+        "stdout_retained_bytes",
+        "stdout_retained_sha256",
+        "stdout_was_utf8",
+        "stdout_truncated",
+        "stderr",
+        "stderr_retained_bytes",
+        "stderr_retained_sha256",
+        "stderr_was_utf8",
+        "stderr_truncated",
+        "evidence_class",
+        "completed_at_utc",
+    }
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise ClaudeCoreError("math experiment result has an unsupported shape")
+    for field in (
+        "problem_id",
+        "statement_sha256",
+        "root_session_id",
+        "experiment_id",
+        "purpose",
+        "code_sha256",
+        "python_runtime_sha256",
+        "codex_sandbox_sha256",
+        "timeout_seconds",
+    ):
+        if value.get(field) != request.get(field):
+            raise ClaudeCoreError("math experiment result binding mismatch")
+    stdout = value.get("stdout")
+    stderr = value.get("stderr")
+    if (
+        value.get("schema_version") != MATH_EXPERIMENT_RESULT_SCHEMA
+        or value.get("request_sha256") != request_sha256
+        or value.get("sandbox_profile") != "axiom-relay-root-math-v1"
+        or value.get("network_access") != "disabled"
+        or value.get("repository_access") != "denied"
+        or value.get("execution_status")
+        not in {"completed", "failed", "timeout", "output_limit"}
+        or isinstance(value.get("returncode"), bool)
+        or not isinstance(value.get("returncode"), int)
+        or isinstance(value.get("duration_ms"), bool)
+        or not isinstance(value.get("duration_ms"), int)
+        or value["duration_ms"] < 0
+        or not isinstance(stdout, str)
+        or not isinstance(stderr, str)
+        or isinstance(value.get("stdout_retained_bytes"), bool)
+        or not isinstance(value.get("stdout_retained_bytes"), int)
+        or value.get("stdout_retained_bytes")
+        != len(stdout.encode("utf-8"))
+        or value["stdout_retained_bytes"] > MAX_MATH_EXPERIMENT_STDOUT_BYTES
+        or isinstance(value.get("stderr_retained_bytes"), bool)
+        or not isinstance(value.get("stderr_retained_bytes"), int)
+        or value.get("stderr_retained_bytes")
+        != len(stderr.encode("utf-8"))
+        or value["stderr_retained_bytes"] > MAX_MATH_EXPERIMENT_STDERR_BYTES
+        or value.get("stdout_retained_sha256")
+        != sha256_bytes(stdout.encode("utf-8"))
+        or value.get("stderr_retained_sha256")
+        != sha256_bytes(stderr.encode("utf-8"))
+        or not isinstance(value.get("stdout_was_utf8"), bool)
+        or not isinstance(value.get("stderr_was_utf8"), bool)
+        or not isinstance(value.get("stdout_truncated"), bool)
+        or not isinstance(value.get("stderr_truncated"), bool)
+        or value.get("evidence_class")
+        != "unverified_computational_diagnostic"
+        or (
+            value.get("execution_status") == "output_limit"
+            and not (
+                value.get("stdout_truncated")
+                or value.get("stderr_truncated")
+            )
+        )
+        or (
+            value.get("execution_status") in {"completed", "failed"}
+            and (
+                value.get("stdout_truncated")
+                or value.get("stderr_truncated")
+            )
+        )
+        or (
+            value.get("execution_status") == "completed"
+            and value.get("returncode") != 0
+        )
+        or (
+            value.get("execution_status") == "failed"
+            and value.get("returncode") == 0
+        )
+    ):
+        raise ClaudeCoreError("math experiment result binding mismatch")
+    _canonical_utc_timestamp(
+        value.get("completed_at_utc"),
+        label="math experiment completion time",
+    )
+    return dict(value)
+
+
+def run_math_experiment(
+    *,
+    problem_id: str,
+    statement_sha256: str,
+    root_session_id: str,
+    experiment_id: str,
+    purpose: str,
+    code: str,
+    timeout_seconds: int,
+    codex_bin: Path,
+    expected_python_runtime_sha256: str,
+    expected_host_source_sha256: str,
+) -> dict[str, Any]:
+    """Run one write-once Python diagnostic in a networkless empty sandbox."""
+
+    problem_id = _safe_problem_id(problem_id)
+    _source, _statement_raw, actual_statement_sha256 = _statement(problem_id)
+    if statement_sha256 != actual_statement_sha256:
+        raise ClaudeCoreError("statement digest mismatch")
+    if SESSION_ID_RE.fullmatch(root_session_id) is None:
+        raise ClaudeCoreError("math experiment root session is invalid")
+    experiment_id = _math_experiment_id(experiment_id)
+    purpose = _bounded_text(
+        purpose,
+        label="math experiment purpose",
+        maximum=MAX_MATH_EXPERIMENT_PURPOSE_BYTES,
+    )
+    code = _bounded_text(
+        code,
+        label="math experiment code",
+        maximum=MAX_MATH_EXPERIMENT_CODE_BYTES,
+    )
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or not 1 <= timeout_seconds <= MAX_MATH_EXPERIMENT_TIMEOUT_SECONDS
+    ):
+        raise ClaudeCoreError(
+            "math experiment timeout must be an integer from 1 to "
+            f"{MAX_MATH_EXPERIMENT_TIMEOUT_SECONDS}"
+        )
+    live_host_source_sha256 = _require_loaded_host_source_current()
+    if expected_host_source_sha256 != live_host_source_sha256:
+        raise ClaudeCoreError("math experiment host source binding mismatch")
+    if not _is_sha256(expected_python_runtime_sha256):
+        raise ClaudeCoreError("math experiment Python binding is invalid")
+    python_runtime_sha256 = _sha256_stable_regular_file(
+        PYTHON_BIN, label="math experiment Python runtime"
+    )
+    if python_runtime_sha256 != expected_python_runtime_sha256:
+        raise ClaudeCoreError("math experiment Python runtime changed")
+    codex_bin = _trusted_executable(
+        codex_bin, label="math experiment Codex sandbox"
+    )
+    codex_sandbox_sha256 = _sha256_stable_regular_file(
+        codex_bin, label="math experiment Codex sandbox"
+    )
+    code_sha256 = sha256_bytes(code.encode("utf-8"))
+    request = {
+        "schema_version": MATH_EXPERIMENT_REQUEST_SCHEMA,
+        "problem_id": problem_id,
+        "statement_sha256": statement_sha256,
+        "root_session_id": root_session_id,
+        "experiment_id": experiment_id,
+        "purpose": purpose,
+        "code": code,
+        "code_sha256": code_sha256,
+        "python_runtime_sha256": python_runtime_sha256,
+        "codex_sandbox_sha256": codex_sandbox_sha256,
+        "host_source_sha256": live_host_source_sha256,
+        "sandbox_profile": "axiom-relay-root-math-v1",
+        "timeout_seconds": timeout_seconds,
+    }
+    request_raw = (canonical_json(request) + "\n").encode("utf-8")
+    request_sha256 = sha256_bytes(request_raw)
+    directory = _mkdir_state_subdir(
+        *problem_id.split("/"),
+        PRIVATE_MATH_EXPERIMENT_DIRECTORY,
+        statement_sha256,
+        root_session_id,
+    )
+    lock_path = directory / ".math-experiment.lock"
+    lock_descriptor = os.open(
+        lock_path,
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        lock_metadata = os.fstat(lock_descriptor)
+        if (
+            not stat.S_ISREG(lock_metadata.st_mode)
+            or lock_metadata.st_nlink != 1
+        ):
+            raise ClaudeCoreError("math experiment lock is unsafe")
+        os.fchmod(lock_descriptor, 0o600)
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        request_path = directory / f"{experiment_id}.request.json"
+        result_path = directory / f"{experiment_id}.result.json"
+        experiment_count, experiment_bytes = _math_experiment_usage(directory)
+        request_exists = request_path.exists() or request_path.is_symlink()
+        if not request_exists:
+            if experiment_count >= MAX_MATH_EXPERIMENTS_PER_ROOT:
+                raise ClaudeCoreError("math experiment count cap reached")
+            if (
+                experiment_bytes + len(request_raw)
+                > MAX_MATH_EXPERIMENT_TOTAL_BYTES
+            ):
+                raise ClaudeCoreError("math experiment byte cap reached")
+        _write_bytes_once(request_path, request_raw, mode=0o600)
+        if result_path.exists() or result_path.is_symlink():
+            stored = _validate_math_experiment_result(
+                _read_canonical_object(
+                    result_path,
+                    label=f"math experiment result {experiment_id}",
+                    maximum_bytes=MAX_MATH_EXPERIMENT_RESULT_BYTES,
+                ),
+                request=request,
+                request_sha256=request_sha256,
+            )
+            return {
+                "schema_version": MATH_EXPERIMENT_RECEIPT_SCHEMA,
+                "status": "existing",
+                "request_sha256": request_sha256,
+                "result_sha256": sha256_file(result_path),
+                "execution": stored,
+            }
+
+        with tempfile.TemporaryDirectory(
+            prefix="axiom-relay-root-math-"
+        ) as raw_sandbox_root:
+            sandbox_root = Path(raw_sandbox_root).resolve(strict=True)
+            os.chmod(sandbox_root, 0o700)
+            codex_home = sandbox_root / "codex-home"
+            home = sandbox_root / "home"
+            work = sandbox_root / "work"
+            for path in (codex_home, home, work):
+                path.mkdir(mode=0o700)
+            filesystem = _math_sandbox_filesystem_toml(
+                sandbox_root=sandbox_root,
+                codex_bin=codex_bin,
+            )
+            inner_environment = {
+                "HOME": str(home),
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "MPLCONFIGDIR": str(work),
+                "OPENBLAS_NUM_THREADS": "1",
+                "OMP_NUM_THREADS": "1",
+                "PATH": os.pathsep.join(
+                    (str(PYTHON_BIN.parent), "/usr/bin", "/bin")
+                ),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONHASHSEED": "0",
+                "PYTHONNOUSERSITE": "1",
+                "TMPDIR": str(work),
+                "XDG_CACHE_HOME": str(work),
+            }
+            command = [
+                str(codex_bin),
+                "sandbox",
+                "--permission-profile",
+                "axiom-relay-root-math",
+                "--config",
+                "permissions.axiom-relay-root-math.filesystem=" + filesystem,
+                "--config",
+                "permissions.axiom-relay-root-math.network.enabled=false",
+                "-C",
+                str(work),
+                "--",
+                "/usr/bin/env",
+                "-i",
+                *(f"{key}={value}" for key, value in inner_environment.items()),
+                str(PYTHON_BIN),
+                "-I",
+                "-B",
+                "-c",
+                code,
+            ]
+            owner_start_token = _process_identity_token(os.getpid())
+            if not _is_sha256(owner_start_token):
+                raise ClaudeCoreError(
+                    "math experiment owner identity is unavailable"
+                )
+            owned_arguments = [
+                "--execute-owned-command",
+                str(os.getpid()),
+                "--owner-start-token",
+                owner_start_token,
+                "--expected-sha256",
+                codex_sandbox_sha256,
+                *command,
+            ]
+            outer_environment, python_lock_descriptor = (
+                _runtime_bound_direct_child_environment(
+                    {
+                        "CODEX_HOME": str(codex_home),
+                        "HOME": str(home),
+                        "LANG": "C.UTF-8",
+                        "LC_ALL": "C.UTF-8",
+                        "PATH": os.pathsep.join(
+                            (str(codex_bin.parent), "/usr/bin", "/bin")
+                        ),
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                        "TMPDIR": str(work),
+                    }
+                )
+            )
+            started = time.monotonic()
+            with _pinned_host_source_command(
+                arguments=owned_arguments,
+                expected_source_sha256=live_host_source_sha256,
+            ) as (owned_command, source_descriptor):
+                process = subprocess.Popen(
+                    owned_command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=str(work),
+                    env=outer_environment,
+                    start_new_session=True,
+                    close_fds=True,
+                    pass_fds=(
+                        source_descriptor,
+                        *(
+                            ()
+                            if python_lock_descriptor is None
+                            else (python_lock_descriptor,)
+                        ),
+                    ),
+                )
+            if os.getpgid(process.pid) != process.pid:
+                _kill_group(process)
+                raise ClaudeCoreError(
+                    "math experiment process group binding failed"
+                )
+            (
+                stdout_raw,
+                stderr_raw,
+                stdout_truncated,
+                stderr_truncated,
+                timed_out,
+            ) = _communicate_math_experiment_bounded(
+                process, timeout_seconds=timeout_seconds
+            )
+            duration_ms = max(
+                0, int(round((time.monotonic() - started) * 1000))
+            )
+        stdout, stdout_was_utf8 = _math_output_text(stdout_raw)
+        stderr, stderr_was_utf8 = _math_output_text(stderr_raw)
+        if timed_out:
+            execution_status = "timeout"
+        elif stdout_truncated or stderr_truncated:
+            execution_status = "output_limit"
+        elif process.returncode == 0:
+            execution_status = "completed"
+        else:
+            execution_status = "failed"
+        completed_at = datetime.now(timezone.utc).isoformat()
+        result = _validate_math_experiment_result(
+            {
+                "schema_version": MATH_EXPERIMENT_RESULT_SCHEMA,
+                "problem_id": problem_id,
+                "statement_sha256": statement_sha256,
+                "root_session_id": root_session_id,
+                "experiment_id": experiment_id,
+                "purpose": purpose,
+                "request_sha256": request_sha256,
+                "code_sha256": code_sha256,
+                "python_runtime_sha256": python_runtime_sha256,
+                "codex_sandbox_sha256": codex_sandbox_sha256,
+                "sandbox_profile": "axiom-relay-root-math-v1",
+                "network_access": "disabled",
+                "repository_access": "denied",
+                "timeout_seconds": timeout_seconds,
+                "execution_status": execution_status,
+                "returncode": int(process.returncode),
+                "duration_ms": duration_ms,
+                "stdout": stdout,
+                "stdout_retained_bytes": len(stdout.encode("utf-8")),
+                "stdout_retained_sha256": sha256_bytes(
+                    stdout.encode("utf-8")
+                ),
+                "stdout_was_utf8": stdout_was_utf8,
+                "stdout_truncated": stdout_truncated,
+                "stderr": stderr,
+                "stderr_retained_bytes": len(stderr.encode("utf-8")),
+                "stderr_retained_sha256": sha256_bytes(
+                    stderr.encode("utf-8")
+                ),
+                "stderr_was_utf8": stderr_was_utf8,
+                "stderr_truncated": stderr_truncated,
+                "evidence_class": "unverified_computational_diagnostic",
+                "completed_at_utc": completed_at,
+            },
+            request=request,
+            request_sha256=request_sha256,
+        )
+        result_raw = (canonical_json(result) + "\n").encode("utf-8")
+        if len(result_raw) > MAX_MATH_EXPERIMENT_RESULT_BYTES:
+            raise ClaudeCoreError("math experiment result exceeds its byte cap")
+        _count_after, bytes_after = _math_experiment_usage(directory)
+        if bytes_after + len(result_raw) > MAX_MATH_EXPERIMENT_TOTAL_BYTES:
+            raise ClaudeCoreError("math experiment byte cap reached")
+        result_sha256 = _write_bytes_once(
+            result_path, result_raw, mode=0o600
+        )
+        return {
+            "schema_version": MATH_EXPERIMENT_RECEIPT_SCHEMA,
+            "status": "created",
+            "request_sha256": request_sha256,
+            "result_sha256": result_sha256,
+            "execution": result,
+        }
+    finally:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+        os.close(lock_descriptor)
 
 
 def reference_candidate_inventory(
@@ -27403,6 +27997,51 @@ def build_mcp_app() -> Any:
                 expected_statement_sha256=bound_statement,
             ),
         )
+
+    @app.tool(name="run_math_experiment")
+    def tool_run_math_experiment(
+        problem_id: str,
+        experiment_id: str,
+        purpose: str,
+        code: str,
+        timeout_seconds: int = 30,
+    ) -> dict[str, Any]:
+        """Run a bounded Python diagnostic before committing proof routes.
+
+        Code runs in an empty, networkless sandbox that denies the repository
+        and user home. The write-once receipt is computational evidence only,
+        never a proof, checkpoint, route admission, or publication authority.
+        """
+
+        require_problem(problem_id)
+        with root_authority_guard(
+            problem_id=bound_problem,
+            statement_sha256=bound_statement,
+            root_session_id=bound_session,
+        ) as root_manifest:
+            publication = _existing_publication(
+                bound_problem, bound_statement
+            )
+            if publication is not None:
+                raise ClaudeCoreError(
+                    "math experiments are closed after publication"
+                )
+            return run_math_experiment(
+                problem_id=problem_id,
+                statement_sha256=bound_statement,
+                root_session_id=bound_session,
+                experiment_id=experiment_id,
+                purpose=purpose,
+                code=code,
+                timeout_seconds=timeout_seconds,
+                codex_bin=bound_codex,
+                expected_python_runtime_sha256=str(
+                    root_manifest["python_runtime_sha256"]
+                ),
+                expected_host_source_sha256=str(
+                    root_manifest["host_source_sha256"]
+                ),
+            )
 
     @app.tool(name="prepare_pro_gap_query")
     def tool_prepare_pro_gap_query(
