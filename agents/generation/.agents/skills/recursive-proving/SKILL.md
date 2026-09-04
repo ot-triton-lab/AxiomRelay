@@ -269,6 +269,15 @@ requires a new id. In the reviewed/GPT-Sol runtime, these tools are intentionall
 absent: persist and return the exact gap evidence to the canonical root instead
 of pretending that the query was prepared.
 
+The exact question and all summaries supplied to the manual gap tool must be
+mathematically self-contained. Assume the Pro recipient has no AxiomRelay
+memory, local files, record ids, digests, or earlier conversation. State every
+definition, hypothesis, settled fact, failed mechanism, and boundary condition
+needed for the requested argument. The host keeps ids and digests in the
+private query packet and receipt, but excludes them from `copy_paste_prompt`.
+Historical v2 packets may bind answers already sent, but their prompts are not
+eligible for a new relay. Create a v3 query with a new `gap_id` instead.
+
 Persist exactly one bounded `events` record using the
 `rethlas_advisor_checkpoint_v1` limits above. Include only evidence-backed
 verified fact/proof ids (use an empty list if none has actually been verified),
@@ -279,9 +288,10 @@ failure mechanisms and boundary checks. A global checkpoint asks Pro to choose
 or sharpen one decisive next mathematical direction. The question is generated
 from this checkpoint's current problem state, never
 copied from a fixed generic prompt: restate the authoritative problem
-succinctly, summarize the included verified facts and failed routes with their
-ids, distinguish proof from heuristic evidence, state the current bottleneck,
-and ask for one bounded decisive next step. For the legacy Chrome-broker
+succinctly, reproduce the included verified facts and failed routes as
+self-contained mathematical content, distinguish proof from heuristic evidence,
+state the current bottleneck, and ask for one bounded decisive next step. Keep
+record ids only in the private checkpoint fields. For the legacy Chrome-broker
 checkpoint (not the canonical manual gap packet), hash the canonical problem
 statement plus the exact included fact/proof records, failed-path records, and
 bottleneck as `source_context_sha256`; the manual gap packet instead uses the

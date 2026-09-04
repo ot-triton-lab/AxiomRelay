@@ -272,6 +272,8 @@ PROBLEM_FILE=data/my_problem.md \
 
 不必等三条全局路线全部失败才提出局部问题。生成查询包不会打开 ChatGPT，也不会消耗 Pro 对话次数，真正发送问题的人只能是 owner。Reviewed/GPT-Sol lanes 无权调用这四个 root 工具，只负责把 gap 和失败证据交回 canonical root。
 
+复制给 Pro 的 prompt 必须完全自包含。默认 Pro 无法访问仓库、AxiomRelay memory、record id、hash、本机文件或之前的对话。因此，回答该 gap 所需的定义、假设、已确定事实、失败机制和边界条件都必须直接写成数学内容。用于溯源的 id 和 digest 只保留在私有 packet 与 receipt 中，不得写入外部 prompt。
+
 `两个独立失败机制 → gap query → owner 转交 → 未验证 gap delta → repair-cone 审计`
 
 通常由 root 调用 `prepare_pro_gap_query`。需要恢复状态或测试接口时，也可以使用下面的 owner CLI：
@@ -297,12 +299,14 @@ agents/.generation-venv/bin/python -I -B agents/claude_core.py \
     "<第二条活动 failed_paths record id>"
   ],
   "boundary_checks": ["处理 I 与 gamma 同阶的区域，不得假设一致角向 gap。"],
-  "recommended_exact_question": "<要交给 GPT Pro 的精确数学问题>"
+  "recommended_exact_question": "<要交给 GPT Pro 的自包含数学问题，写全所有必需定义和假设>"
 }
 JSON
 ```
 
-不要自行提交 `source_context_sha256`。Host 会逐条解析引用记录，拒绝已失效的记录和 channel 不匹配的记录，保存当时的 ledger head，再计算 digest。最终生成的问题会带上 settled facts、两条失败路径和全部 boundary checks。发送给 Pro 时，只复制 receipt 返回的 `copy_paste_prompt`。
+不要自行提交 `source_context_sha256`。Host 会逐条解析引用记录，拒绝已失效的记录和 channel 不匹配的记录，保存当时的 ledger head，再计算 digest。最终生成的问题会带上 settled facts、两条失败路径和全部 boundary checks，但内部 id 与 hash 只保留在 packet 中。发送给 Pro 时，只复制 receipt 返回的 `copy_paste_prompt`，不要附加 receipt metadata，也不能假设 Pro 会自行补回省略的上下文。
+
+历史 v2 query 仍可用于审计，也可以绑定已经发送出去的回答，但系统不会再把旧版外部 prompt 返回用于新 relay。此时会返回 `external_relay_status=legacy_prompt_requires_new_gap_id`。要取得自包含 prompt，必须用新的 `gap_id` 创建 v3 query。
 
 每次读取都会做 compare-and-swap 检查。恢复 query 时，必须带上创建 receipt 返回的 digest：
 

@@ -286,12 +286,25 @@ constructs the final `copy_paste_prompt`. A stable `gap_id` is write-once;
 changed evidence requires a new id. The host also enforces per-statement count
 and byte caps.
 
+The external `copy_paste_prompt` must be mathematically self-contained. Assume
+the Pro recipient has no AxiomRelay memory, local files, record ids, digests,
+or earlier conversation. Restate every definition, hypothesis, settled result,
+failed mechanism, and boundary condition needed to answer. Never use phrases
+such as "as above" or "from memory" in place of mathematical content. Record
+ids and hashes remain in the private packet and receipt for host provenance;
+the host must not put them in the externally copied prompt.
+
 Return the receipt's verbatim `copy_paste_prompt`, `gap_id`, `query_sha256`,
-and `source_context_sha256` to the owner, then stop locally. If state must be
+and `source_context_sha256` to the owner, then stop locally. Only the
+`copy_paste_prompt` is pasted into Pro; the ids and digests are local relay
+metadata. If state must be
 reloaded, call `get_pro_gap_query` with the receipt's exact
 `expected_query_sha256`; its effective status changes from
 `waiting_owner_pro_response` to `response_available` after a bound response is
-present.
+present. A historical v2 query is audit-only for future relay:
+`get_pro_gap_query` returns no copy prompt and reports
+`legacy_prompt_requires_new_gap_id`. It may still bind an answer that was
+already sent. Use a new `gap_id` to prepare a self-contained v3 prompt.
 
 When the owner pastes an answer, call `ingest_pro_gap_response` with the exact
 gap and query SHA. Load it only with `get_pro_gap_response`, supplying both the

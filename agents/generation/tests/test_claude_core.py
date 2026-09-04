@@ -6300,11 +6300,25 @@ def test_pro_gap_query_and_response_are_sha_bound_targeted_deltas(
         recommended_exact_question=question,
     )
     assert created["status"] == "created"
-    assert created["copy_paste_prompt"] != question
-    assert question in created["copy_paste_prompt"]
-    assert fact_id in created["copy_paste_prompt"]
-    assert all(record_id in created["copy_paste_prompt"] for record_id in failure_ids)
-    assert "Treat I <= C gamma" in created["copy_paste_prompt"]
+    assert created["external_relay_status"] == "self_contained_prompt_ready"
+    prompt = created["copy_paste_prompt"]
+    assert prompt != question
+    assert question in prompt
+    assert "Self-containedness requirement:" in prompt
+    assert "no access to AxiomRelay memory" in prompt
+    assert "The I-marginal is the explicit invariant density Q." in prompt
+    assert "Fiberwise inversion leaves an uncontrolled radial derivative." in prompt
+    assert "Dyadic localization leaves non-absorbed interface fluxes." in prompt
+    assert "Treat I <= C gamma" in prompt
+    assert "Host-certified binding:" not in prompt
+    assert "problem_id:" not in prompt
+    assert "gap_id:" not in prompt
+    assert fact_id not in prompt
+    assert all(record_id not in prompt for record_id in failure_ids)
+    assert statement_sha256 not in prompt
+    assert frontier["frontier_sha256"] not in prompt
+    assert frontier["memory_sha256"] not in prompt
+    assert created["source_context_sha256"] not in prompt
     assert created["source_context_attestation"].startswith("host_computed")
     assert created["source_context_sha256"] != "a" * 64
     query = claude_core.get_pro_gap_query(
@@ -6315,7 +6329,16 @@ def test_pro_gap_query_and_response_are_sha_bound_targeted_deltas(
     )
     assert query["query_sha256"] == created["query_sha256"]
     assert query["status"] == "waiting_owner_pro_response"
+    assert query["external_relay_status"] == "self_contained_prompt_ready"
     assert len(query["failed_attempts"]) == 2
+    assert query["schema_version"] == claude_core.PRO_GAP_QUERY_SCHEMA
+    assert query["verified_fact_or_proof_ids"] == [fact_id]
+    assert query["failed_path_record_ids"] == failure_ids
+    for binding in (
+        query["verified_fact_or_proof_records"] + query["failed_path_records"]
+    ):
+        assert binding["record_id"] not in prompt
+        assert binding["item_sha256"] not in prompt
     with pytest.raises(claude_core.ClaudeCoreError, match="CAS digest mismatch"):
         claude_core.get_pro_gap_query(
             problem_id="example",
@@ -6332,6 +6355,57 @@ def test_pro_gap_query_and_response_are_sha_bound_targeted_deltas(
         / "gap_uniform_resolvent.json"
     )
     assert stat.S_IMODE(query_path.stat().st_mode) == 0o600
+
+    stored_packet = json.loads(query_path.read_text(encoding="utf-8"))
+    legacy_packet = dict(stored_packet)
+    legacy_packet["schema_version"] = claude_core.PRO_GAP_QUERY_SCHEMA_PREVIOUS
+    legacy_packet["copy_paste_prompt"] = claude_core._compose_pro_gap_prompt_v2(
+        problem_id="example",
+        statement_sha256=statement_sha256,
+        gap_id="gap_uniform_resolvent",
+        source_context_sha256=legacy_packet["source_context_sha256"],
+        target_claim=legacy_packet["target_claim"],
+        settled_facts=legacy_packet["settled_facts"],
+        verified_fact_or_proof_records=legacy_packet[
+            "verified_fact_or_proof_records"
+        ],
+        failed_attempts=legacy_packet["failed_attempts"],
+        failed_path_records=legacy_packet["failed_path_records"],
+        boundary_checks=legacy_packet["boundary_checks"],
+        ledger_head=legacy_packet["ledger_head"],
+        recommended_exact_question=legacy_packet[
+            "recommended_exact_question"
+        ],
+    )
+    normalized_legacy = claude_core._validate_pro_gap_query_packet(
+        legacy_packet,
+        problem_id="example",
+        statement_sha256=statement_sha256,
+        expected_gap_id="gap_uniform_resolvent",
+    )
+    assert (
+        normalized_legacy["schema_version"]
+        == claude_core.PRO_GAP_QUERY_SCHEMA_PREVIOUS
+    )
+    current_raw = query_path.read_bytes()
+    legacy_raw = (claude_core.canonical_json(legacy_packet) + "\n").encode(
+        "utf-8"
+    )
+    try:
+        query_path.write_bytes(legacy_raw)
+        legacy_query = claude_core.get_pro_gap_query(
+            problem_id="example",
+            statement_sha256=statement_sha256,
+            gap_id="gap_uniform_resolvent",
+            expected_query_sha256=hashlib.sha256(legacy_raw).hexdigest(),
+        )
+        assert legacy_query["copy_paste_prompt"] is None
+        assert (
+            legacy_query["external_relay_status"]
+            == "legacy_prompt_requires_new_gap_id"
+        )
+    finally:
+        query_path.write_bytes(current_raw)
 
     replayed = claude_core.prepare_pro_gap_query(
         problem_id="example",

@@ -330,7 +330,8 @@ REFERENCE_CANDIDATE_INGEST_RECEIPT_SCHEMA = (
     "rethlas_reference_candidate_ingest_receipt_v2"
 )
 PRO_GAP_ID_RE = re.compile(r"^gap_[a-z0-9][a-z0-9_]{0,58}$")
-PRO_GAP_QUERY_SCHEMA = "axiom_relay_pro_gap_query_v2"
+PRO_GAP_QUERY_SCHEMA_PREVIOUS = "axiom_relay_pro_gap_query_v2"
+PRO_GAP_QUERY_SCHEMA = "axiom_relay_pro_gap_query_v3"
 PRO_GAP_QUERY_RECEIPT_SCHEMA = "axiom_relay_pro_gap_query_receipt_v2"
 PRO_GAP_RESPONSE_BINDING_SCHEMA = "axiom_relay_pro_gap_response_binding_v2"
 PRO_GAP_RESPONSE_RECEIPT_SCHEMA = "axiom_relay_pro_gap_response_receipt_v2"
@@ -403,7 +404,7 @@ PUBLICATION_TARGET_PRECONDITION_FIELDS = {
 }
 RUNTIME_DEPENDENCY_MANIFEST_SCHEMA = "rethlas_claude_runtime_dependencies_v1"
 RUNTIME_DEPENDENCY_SHA256 = {
-    "CLAUDE.md": "ed1cb9e8960f5bf4a5f2a1ff006696a33c7c48cb6dd86b9bd498443a0e18256c",
+    "CLAUDE.md": "29652e46be151291cf60c5f0ec33be4d5f231393f3615545b34b530398ea4911",
     ".mcp.json": "b69488ba8934f965cc58e3f02907d8e9b1129bf3558637655ddfd8e1eba3c177",
     "mcp/legacy_server.py": "3601b1409986e9d8a916bf984d4aae8b89b7237d81e92ab39d5bf5eb7966eaa5",
     "mcp/legacy_verification_client.py": "a84cc93af6c538e665078f277417223d96ea54d1cd5b64e533dc576ba40517b7",
@@ -2869,7 +2870,7 @@ def _pro_gap_context_material(
     }
 
 
-def _compose_pro_gap_prompt(
+def _compose_pro_gap_prompt_v2(
     *,
     problem_id: str,
     statement_sha256: str,
@@ -2884,6 +2885,8 @@ def _compose_pro_gap_prompt(
     ledger_head: dict[str, Any],
     recommended_exact_question: str,
 ) -> str:
+    """Reproduce historical v2 packets for canonical, read-only validation."""
+
     lines = [
         "Targeted mathematical proof-gap request",
         "",
@@ -2932,6 +2935,67 @@ def _compose_pro_gap_prompt(
             "Separate proved statements from heuristics and state any additional "
             "hypothesis you need. Do not treat the ledger summaries as authority "
             "beyond their cited bindings.",
+        ]
+    )
+    prompt = "\n".join(lines).strip() + "\n"
+    _bounded_text(
+        prompt,
+        label="Pro gap copy/paste prompt",
+        maximum=MAX_PRO_GAP_COPY_PROMPT_BYTES,
+    )
+    return prompt
+
+
+def _compose_pro_gap_prompt(
+    *,
+    target_claim: str,
+    settled_facts: list[str],
+    failed_attempts: list[str],
+    boundary_checks: list[str],
+    recommended_exact_question: str,
+) -> str:
+    """Build the external prompt without any host-only provenance values."""
+
+    lines = [
+        "Targeted mathematical proof-gap request",
+        "",
+        "Self-containedness requirement:",
+        "This prompt is the complete mathematical context available to the "
+        "recipient. The recipient has no access to AxiomRelay memory, local "
+        "files, record identifiers, digests, or prior conversations. Every "
+        "definition, hypothesis, settled fact, failed mechanism, and boundary "
+        "condition needed to answer must be stated explicitly below. If a "
+        "required premise is missing, identify it instead of retrieving, "
+        "inferring, or assuming contextual memory.",
+        "",
+        "Exact question, including all required definitions and hypotheses:",
+        recommended_exact_question,
+        "",
+        "Exact target claim:",
+        target_claim,
+        "",
+        "Settled mathematical facts reproduced for this request:",
+    ]
+    if settled_facts:
+        lines.extend(f"- {summary}" for summary in settled_facts)
+    else:
+        lines.append("- None supplied; do not infer additional settled facts.")
+    lines.extend(
+        ["", "Independent failed mechanisms that must not be repeated:"]
+    )
+    lines.extend(f"- {summary}" for summary in failed_attempts)
+    lines.extend(["", "Boundary and singular-regime checks:"])
+    lines.extend(f"- {item}" for item in boundary_checks)
+    lines.extend(
+        [
+            "",
+            "Please close only the target claim above with a complete rigorous "
+            "argument, or give a concrete counterexample showing that it is "
+            "false. Explicitly address every failed mechanism and boundary "
+            "check above. Separate proved statements from heuristics and state "
+            "any additional hypothesis you need. Use only the mathematical "
+            "context written in this prompt. Do not assume access to memory, "
+            "local artifacts, record identifiers, hashes, or earlier chat.",
         ]
     )
     prompt = "\n".join(lines).strip() + "\n"
@@ -3084,8 +3148,10 @@ def _validate_pro_gap_query_packet(
     }
     if not isinstance(value, dict) or set(value) != expected_keys:
         raise ClaudeCoreError("Pro gap query has an unsupported shape")
+    schema_version = value.get("schema_version")
     if (
-        value.get("schema_version") != PRO_GAP_QUERY_SCHEMA
+        schema_version
+        not in {PRO_GAP_QUERY_SCHEMA_PREVIOUS, PRO_GAP_QUERY_SCHEMA}
         or value.get("problem_id") != problem_id
         or value.get("statement_sha256") != statement_sha256
         or value.get("gap_id") != expected_gap_id
@@ -3170,24 +3236,33 @@ def _validate_pro_gap_query_packet(
         label="Pro gap recommended exact question",
         maximum=MAX_PRO_GAP_QUESTION_CHARS,
     )
-    expected_prompt = _compose_pro_gap_prompt(
-        problem_id=problem_id,
-        statement_sha256=statement_sha256,
-        gap_id=expected_gap_id,
-        source_context_sha256=str(source_context_sha256),
-        target_claim=target_claim,
-        settled_facts=settled_facts,
-        verified_fact_or_proof_records=fact_records,
-        failed_attempts=failed_attempts,
-        failed_path_records=failed_records,
-        boundary_checks=boundary_checks,
-        ledger_head=ledger_head,
-        recommended_exact_question=recommended_exact_question,
-    )
+    if schema_version == PRO_GAP_QUERY_SCHEMA_PREVIOUS:
+        expected_prompt = _compose_pro_gap_prompt_v2(
+            problem_id=problem_id,
+            statement_sha256=statement_sha256,
+            gap_id=expected_gap_id,
+            source_context_sha256=str(source_context_sha256),
+            target_claim=target_claim,
+            settled_facts=settled_facts,
+            verified_fact_or_proof_records=fact_records,
+            failed_attempts=failed_attempts,
+            failed_path_records=failed_records,
+            boundary_checks=boundary_checks,
+            ledger_head=ledger_head,
+            recommended_exact_question=recommended_exact_question,
+        )
+    else:
+        expected_prompt = _compose_pro_gap_prompt(
+            target_claim=target_claim,
+            settled_facts=settled_facts,
+            failed_attempts=failed_attempts,
+            boundary_checks=boundary_checks,
+            recommended_exact_question=recommended_exact_question,
+        )
     if value.get("copy_paste_prompt") != expected_prompt:
         raise ClaudeCoreError("Pro gap copy/paste prompt binding mismatch")
     return {
-        "schema_version": PRO_GAP_QUERY_SCHEMA,
+        "schema_version": schema_version,
         "problem_id": problem_id,
         "statement_sha256": statement_sha256,
         "gap_id": expected_gap_id,
@@ -3281,7 +3356,7 @@ def prepare_pro_gap_query(
     boundary_checks: list[str],
     recommended_exact_question: str,
 ) -> dict[str, Any]:
-    """Persist one host-attested, write-once question for a human Pro relay."""
+    """Persist one host-attested query with a self-contained external prompt."""
 
     problem_id = _safe_problem_id(problem_id)
     _source, _statement_raw, actual_statement_sha256 = _statement(problem_id)
@@ -3333,19 +3408,10 @@ def prepare_pro_gap_query(
         boundary_checks=boundary_checks,
     )
     copy_paste_prompt = _compose_pro_gap_prompt(
-        problem_id=problem_id,
-        statement_sha256=statement_sha256,
-        gap_id=gap_id,
-        source_context_sha256=attested["source_context_sha256"],
         target_claim=target_claim,
         settled_facts=settled_facts,
-        verified_fact_or_proof_records=attested[
-            "verified_fact_or_proof_records"
-        ],
         failed_attempts=failed_attempts,
-        failed_path_records=attested["failed_path_records"],
         boundary_checks=boundary_checks,
-        ledger_head=attested["ledger_head"],
         recommended_exact_question=recommended_exact_question,
     )
     packet = _validate_pro_gap_query_packet(
@@ -3442,6 +3508,7 @@ def prepare_pro_gap_query(
     return {
         "schema_version": PRO_GAP_QUERY_RECEIPT_SCHEMA,
         "status": "existing" if existed else "created",
+        "external_relay_status": "self_contained_prompt_ready",
         "problem_id": problem_id,
         "statement_sha256": statement_sha256,
         "gap_id": gap_id,
@@ -3484,8 +3551,19 @@ def get_pro_gap_query(
         query=normalized,
         missing_ok=True,
     )
+    external_relay_ready = (
+        normalized["schema_version"] == PRO_GAP_QUERY_SCHEMA
+    )
     return {
         **normalized,
+        "copy_paste_prompt": (
+            normalized["copy_paste_prompt"] if external_relay_ready else None
+        ),
+        "external_relay_status": (
+            "self_contained_prompt_ready"
+            if external_relay_ready
+            else "legacy_prompt_requires_new_gap_id"
+        ),
         "stored_status": normalized["status"],
         "status": (
             "response_available" if response is not None
@@ -27027,8 +27105,9 @@ def build_mcp_app() -> Any:
     ) -> dict[str, Any]:
         """Persist one exact human-relay prompt after two independent failures.
 
-        This only prepares a copy/paste packet. It never opens a browser, sends
-        a paid request, or treats a future answer as verified.
+        The external prompt is self-contained and excludes host-only record ids
+        and digests. This only prepares a copy/paste packet. It never opens a
+        browser, sends a paid request, or treats a future answer as verified.
         """
 
         require_problem(problem_id)

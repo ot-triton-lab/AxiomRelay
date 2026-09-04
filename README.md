@@ -312,6 +312,13 @@ Preparing the packet never opens ChatGPT or spends a Pro turn; the owner
 remains the only sender. Reviewed/GPT-Sol lanes do not have these four root
 tools: they hand the precise gap evidence back to the canonical root.
 
+The copied prompt is self-contained. It assumes that Pro cannot access the
+repository, AxiomRelay memory, record ids, hashes, local files, or earlier chat.
+All definitions, hypotheses, settled facts, failed mechanisms, and boundary
+conditions needed for the gap must therefore be written out as mathematical
+content. Provenance ids and digests stay inside the private packet and receipt;
+they are never inserted into the external prompt.
+
 `two failed mechanisms → gap query → owner relay → untrusted gap delta → repair-cone audit`
 
 The root normally calls `prepare_pro_gap_query` itself. The equivalent owner
@@ -338,7 +345,7 @@ agents/.generation-venv/bin/python -I -B agents/claude_core.py \
     "<second active failed_paths record id>"
   ],
   "boundary_checks": ["Treat I comparable to gamma without assuming a uniform angular gap."],
-  "recommended_exact_question": "<the exact mathematical question for GPT Pro>"
+  "recommended_exact_question": "<a self-contained mathematical question for GPT Pro, including every required definition and hypothesis>"
 }
 JSON
 ```
@@ -346,8 +353,15 @@ JSON
 The caller does not supply `source_context_sha256`. The host resolves every
 cited record, rejects inactive or wrong-channel records, snapshots the ledger
 head, computes the digest, and expands the question into a prompt containing
-the settled facts, both failed paths, and all boundary checks. Copy only the
-returned `copy_paste_prompt`.
+the settled facts, both failed paths, and all boundary checks. Internal ids and
+hashes remain in the stored packet. Copy only the returned
+`copy_paste_prompt`; do not append receipt metadata or assume that Pro can
+recover omitted context.
+
+Historical v2 query packets remain readable for audit and for binding an answer
+that was already sent. Their old external prompt is not returned for a new
+relay: `external_relay_status=legacy_prompt_requires_new_gap_id`. Prepare a v3
+query under a new `gap_id` to obtain a self-contained prompt.
 
 Every read is compare-and-swap checked. To recover a query, provide the digest
 from its creation receipt:

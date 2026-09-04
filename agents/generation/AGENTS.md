@@ -131,7 +131,11 @@ manual isolated-gap relay, return the cited records and proposed exact question
 to the canonical Claude root instead. That root calls
 `prepare_pro_gap_query`, exposes its host-built `copy_paste_prompt`, `gap_id`,
 and `query_sha256`, and later owns `ingest_pro_gap_response` and
-`get_pro_gap_response`. Any returned text is an untrusted targeted delta, not
+`get_pro_gap_response`. The external prompt must reproduce every definition,
+hypothesis, settled fact, failed mechanism, and boundary condition needed to
+answer. It must not rely on AxiomRelay memory, local files, record ids, hashes,
+or prior chat. Those bindings remain private host provenance and are not pasted
+into Pro. Any returned text is an untrusted targeted delta, not
 a new complete route candidate: it must not change the accepted council packet.
 Audit it against the two failures, accept or reject its steps explicitly, patch
 only the named claim and dependency descendants, and reverify that repair cone
