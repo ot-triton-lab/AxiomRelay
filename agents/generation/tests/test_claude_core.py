@@ -9060,7 +9060,10 @@ def test_cohort_token_telemetry_records_aggregate_and_honest_lane_gaps(
     assert (tmp_path / "token_telemetry.json").is_file()
 
 
-def test_route_council_accepts_only_bounded_statement_retrieval_events() -> None:
+@pytest.mark.parametrize("retrieval_status", ["completed", "failed"])
+def test_route_council_accepts_only_bounded_statement_retrieval_events(
+    retrieval_status: str,
+) -> None:
     report = {"synthetic": "retrieval-only report"}
     profile = {
         "schema_version": claude_core.COUNCIL_RETRIEVAL_PROFILE_SCHEMA,
@@ -9094,8 +9097,15 @@ def test_route_council_accepts_only_bounded_statement_retrieval_events() -> None
                 "id": "call-1",
                 "server": claude_core.COUNCIL_RETRIEVAL_SERVER,
                 "tool": "search_arxiv_theorems",
-                "status": "completed",
-                "result": {"content": []},
+                "status": retrieval_status,
+                "result": {
+                    "content": [{
+                        "type": "text",
+                        "text": "Error executing tool search_arxiv_theorems"
+                        if retrieval_status == "failed" else "search results",
+                    }],
+                    "structured_content": None,
+                },
                 "error": None,
             },
         },
@@ -9118,6 +9128,48 @@ def test_route_council_accepts_only_bounded_statement_retrieval_events() -> None
     assert trace["tool_free"] is False
     assert trace["retrieval_tool_calls"] == 1
     assert trace["retrieval_tool_counts"]["search_arxiv_theorems"] == 1
+    assert trace["retrieval_failed_tool_calls"] == int(retrieval_status == "failed")
+    expected_failures = (
+        [claude_core.sha256_bytes(claude_core.canonical_json(events[3]).encode())]
+        if retrieval_status == "failed" else []
+    )
+    assert trace["retrieval_failed_event_sha256s"] == expected_failures
+
+    # An ordinary MCP error result may be followed by a successful, distinct
+    # read in the same turn. Both attempts consume the existing query budget.
+    second_call = [
+        {**event, "item": {**event["item"], "id": "call-2"}}
+        for event in events[2:4]
+    ]
+    second_call[1]["item"].update(
+        status="completed", result={"content": []}, error=None,
+    )
+    recovered_events = events[:4] + second_call + events[4:]
+    recovered_raw = b"".join(
+        (claude_core.canonical_json(event) + "\n").encode()
+        for event in recovered_events
+    )
+    recovered_trace, recovered_report = claude_core._parse_council_events(
+        recovered_raw, retrieval_profile=profile
+    )
+    assert recovered_report == report
+    assert recovered_trace["retrieval_tool_calls"] == 2
+    assert recovered_trace["retrieval_failed_event_sha256s"] == expected_failures
+    third_call = [
+        {**event, "item": {**event["item"], "id": "call-3"}}
+        for event in second_call
+    ]
+    over_budget_raw = b"".join(
+        (claude_core.canonical_json(event) + "\n").encode()
+        for event in events[:4] + second_call + third_call + events[4:]
+    )
+    with pytest.raises(claude_core.ClaudeCoreError, match="budget was exceeded"):
+        claude_core._parse_council_events(over_budget_raw, retrieval_profile=profile)
+
+    with pytest.raises(claude_core.ClaudeCoreError, match="without statement permission"):
+        claude_core._parse_council_events(
+            raw, retrieval_profile={"mode": "disabled", "tools": []}
+        )
 
     forbidden = list(events)
     forbidden[3] = {
@@ -9163,7 +9215,24 @@ def test_route_council_accepts_only_bounded_statement_retrieval_events() -> None
             [events[0], events[1], events[2], events[2], events[3], events[4], events[5]],
             "start is invalid",
         ),
+        (
+            events[:4] + [events[3]] + events[4:],
+            "completion is invalid",
+        ),
     ]
+    for mutation in (
+        {"status": "in_progress"},
+        {"status": ["failed"]},
+        {"status": {"failed": True}},
+        {"result": None},
+        {"error": {"message": "transport failed"}},
+    ):
+        lifecycle_cases.append((
+            events[:3] + [{
+                **events[3], "item": {**events[3]["item"], **mutation}
+            }] + events[4:],
+            "completion is invalid",
+        ))
     for lifecycle_events, expected_error in lifecycle_cases:
         lifecycle_raw = b"".join(
             (claude_core.canonical_json(event) + "\n").encode()

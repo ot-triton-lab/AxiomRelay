@@ -9155,6 +9155,7 @@ def _parse_council_events(
     completed_call_ids: set[str] = set()
     retrieval_calls: dict[str, tuple[str, str, str]] = {}
     tool_counts = {tool: 0 for tool in COUNCIL_RETRIEVAL_TOOLS}
+    failed_retrieval_event_sha256s: list[str] = []
     recoverable_error_event_sha256s: list[str] = []
     for line_number, line in enumerate(raw.splitlines(), start=1):
         if not line.strip():
@@ -9288,7 +9289,7 @@ def _parse_council_events(
                         or existing_call[:2] != binding
                         or existing_call[2] != "started"
                         or call_id in completed_call_ids
-                        or raw_item.get("status") != "completed"
+                        or raw_item.get("status") not in ("completed", "failed")
                         or raw_item.get("error") is not None
                         or not isinstance(raw_item.get("result"), dict)
                     ):
@@ -9298,6 +9299,14 @@ def _parse_council_events(
                     retrieval_calls[call_id] = (*binding, "completed")
                     completed_call_ids.add(call_id)
                     tool_counts[str(tool)] += 1
+                    # Native Codex marks an MCP isError result as failed even
+                    # when the transport returned a normal result envelope.
+                    # It is still one finished, budgeted retrieval attempt,
+                    # not a failed council turn or source evidence. Keep its
+                    # diagnostic binding without replaying it or accepting a
+                    # missing result / transport error as a completed call.
+                    if raw_item.get("status") == "failed":
+                        failed_retrieval_event_sha256s.append(sha256_bytes(line))
             elif item_type not in ordinary_items:
                 raise ClaudeCoreError("route-council used a forbidden tool or item")
             if event_type == "item.completed" and item_type in {
@@ -9352,6 +9361,8 @@ def _parse_council_events(
             "retrieval_only": retrieval_enabled,
             "retrieval_tool_calls": len(completed_call_ids),
             "retrieval_tool_counts": tool_counts,
+            "retrieval_failed_tool_calls": len(failed_retrieval_event_sha256s),
+            "retrieval_failed_event_sha256s": failed_retrieval_event_sha256s,
             "retrieval_profile_sha256": sha256_bytes(
                 (canonical_json(retrieval_profile) + "\n").encode("utf-8")
             ),
