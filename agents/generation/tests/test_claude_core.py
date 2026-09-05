@@ -9175,6 +9175,91 @@ def test_route_council_accepts_only_bounded_statement_retrieval_events() -> None
             )
 
 
+@pytest.mark.parametrize("retrieval_enabled", [False, True])
+def test_council_launch_keeps_mcp_discovery_host_without_execution_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retrieval_enabled: bool,
+) -> None:
+    profile = {"mode": "matlas_arxiv" if retrieval_enabled else "disabled"}
+    monkeypatch.setattr(
+        claude_core, "_validate_council_retrieval_profile",
+        lambda *_args, **_kwargs: profile,
+    )
+    monkeypatch.setattr(claude_core, "_copy_council_codex_auth", lambda _home: None)
+    monkeypatch.setattr(
+        claude_core, "_write_host_source_snapshot",
+        lambda *_args, **_kwargs: (tmp_path / "snapshot.py", tmp_path / "source.py"),
+    )
+    server_config = '{command="bound-retrieval-server"}'
+    monkeypatch.setattr(
+        claude_core, "_council_retrieval_mcp_toml",
+        lambda **_kwargs: (server_config, "a" * 64),
+    )
+    monkeypatch.setattr(
+        claude_core, "_runtime_bound_direct_child_environment",
+        lambda environment: (environment, None),
+    )
+    captured: list[str] = []
+
+    class StopBeforeDispatch(Exception):
+        pass
+
+    @contextmanager
+    def intercept(*, arguments: list[str], **_kwargs: object):
+        captured.extend(arguments)
+        raise StopBeforeDispatch
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(claude_core, "_pinned_host_source_command", intercept)
+    with pytest.raises(StopBeforeDispatch):
+        claude_core._invoke_sol_council(
+            codex_bin=_SYSTEM_TRUE,
+            phase="blind",
+            request={
+                "phase": "blind",
+                "problem_id": "example",
+                "statement_sha256": _statement_digest(),
+                "root_session_id": "12345678-1234-4123-8123-123456789abc",
+                "council_id": "council_" + "b" * 32,
+                "retrieval_profile": profile,
+            },
+            output_schema={
+                "type": "object", "properties": {}, "required": [],
+                "additionalProperties": False,
+            },
+            host_source_sha256="a" * 64,
+            timeout_seconds=60,
+            expected_executable_sha256=claude_core.sha256_file(_SYSTEM_TRUE),
+            launch_guard=threading.Lock(),
+        )
+
+    config: dict[str, Any] = {}
+    for index, argument in enumerate(captured[:-1]):
+        if argument == "--config":
+            for key, value in tomllib.loads(captured[index + 1]).items():
+                if isinstance(value, dict):
+                    config.setdefault(key, {}).update(value)
+                else:
+                    config[key] = value
+    assert config["features"]["code_mode_host"] is retrieval_enabled
+    for feature in (
+        "code_mode", "shell_tool", "unified_exec", "multi_agent", "apps",
+        "browser_use", "computer_use", "standalone_web_search",
+    ):
+        assert config["features"][feature] is False
+    assert config["web_search"] == "disabled"
+    assert config["tools"]["web_search"] is False
+    assert config["agents"]["enabled"] is False
+    assert config["mcp_servers"] == (
+        {claude_core.COUNCIL_RETRIEVAL_SERVER: {"command": "bound-retrieval-server"}}
+        if retrieval_enabled else {}
+    )
+    assert captured[captured.index("--sandbox") + 1] == "read-only"
+    assert "--ignore-user-config" in captured
+    assert "--ignore-rules" in captured
+
+
 def test_council_retrieval_mcp_config_carries_root_execution_epoch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

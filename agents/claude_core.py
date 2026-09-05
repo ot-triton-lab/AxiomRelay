@@ -9929,7 +9929,7 @@ def _invoke_sol_council(
             command.extend(("--config", "mcp_servers={}"))
         for option in (
             "shell_tool", "shell_snapshot", "shell_zsh_fork", "code_mode",
-            "code_mode_host", "unified_exec", "unified_exec_zsh_fork",
+            "unified_exec", "unified_exec_zsh_fork",
             "multi_agent", "multi_agent_v2", "apps", "hooks", "remote_plugin",
             "skill_mcp_dependency_install", "skill_search", "plugins",
             "plugin_sharing", "recommended_plugins", "image_generation",
@@ -9938,6 +9938,16 @@ def _invoke_sol_council(
             "standalone_web_search", "tool_suggest",
         ):
             command.extend(("--config", f"features.{option}=false"))
+        # MCP tool discovery uses the shared host even when code-mode
+        # execution is disabled. Keep it available only for the bound
+        # retrieval server; shell and code-mode execution remain disabled.
+        command.extend(
+            (
+                "--config",
+                "features.code_mode_host="
+                + ("true" if retrieval_enabled else "false"),
+            )
+        )
         command.extend(
             (
                 "--config", "agents.enabled=false",
