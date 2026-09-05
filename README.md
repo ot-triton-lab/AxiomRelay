@@ -15,6 +15,10 @@ same bytes.
 > provenance, and replay guarantees, but model verification remains
 > probabilistic and is not a substitute for expert review.
 
+This README describes the `axiomgraph-v1` branch, which adds versioned
+AxiomGraph publication events, migrates OpenAI roles from Sol to GPT-6 Astra,
+and lets Claude roots run bounded math experiments.
+
 ## Why AxiomRelay exists
 
 Hard proof attempts fail in ways that ordinary chat loops handle poorly:
@@ -67,8 +71,9 @@ untrusted gap delta -> local audit -> repair only the dependency cone
 
 GPT Pro is therefore used as a low-frequency **gap oracle**, not as proof
 authority and not merely as another whole-proof generator. The root manages
-state and chooses the next bottleneck; isolated Astra lanes supply search
-diversity; Pro may propose a decisive local argument or counterexample; and
+state and chooses the next bottleneck; isolated proof lanes supply search
+diversity using the selected model profile; Pro may propose a decisive local
+argument or counterexample; and
 the verifier still checks the final proof in full. A failed Pro answer does not
 erase earlier work, while an accepted local step advances the frontier for the
 next round. Each follow-up question is newly bound to the updated statement,
@@ -93,7 +98,8 @@ optional GPT Pro / human answer ------+ ingest as unverified, SHA-bound input
                                       |
                           one accepted three-route slate
                                       v
-                       three isolated GPT Astra lanes
+                       three isolated proof lanes
+                         model selected by profile
                             |         |         |
                             +---------+---------+
                                       v
@@ -113,32 +119,57 @@ The host controls admission, fencing, recovery, and publication. Roots design
 and synthesize. Proof lanes cannot spawn descendants. Verifiers cannot edit the
 proof or publish it.
 
-### AxiomGraph bridge (experimental foundation)
+### AxiomGraph source interface v1 (experimental)
 
-After an already-reconciled `rethlas-publication-v6` result, the host now emits
-a best-effort, immutable source event through a versioned, stdlib-only wire
-interface. The canonical interface manifest is
-`agents/generation/mcp/axiomgraph_source_interface_v1.json`. Each event binds
-the exact target and blueprint bytes, publication receipt, normalized
-ProofItem DAG, stable verifier profile, and the actual loaded Core/export
-runtime digests. Events are retained by publication receipt and event id under
-`agents/.claude_core/axiomgraph_exports/v1/publications`.
+The Claude Core host automatically attempts a local export after reconciling
+an active `rethlas-publication-v6` publication. Publication lookup also retries
+the export. This runs after the existing two-pass publication checks and uses
+only the Python standard library; no AxiomGraph installation is required.
 
-AxiomRelay does not import AxiomGraph or project an AxiomGraph object. A
-separately versioned consumer reads this source protocol and may translate an
-event only after checking the interface major/minor, required capabilities,
-the exact AxiomGraph schema digest, and the runtime-source bindings. Internal
-Relay refactors can therefore retain compatibility by continuing to emit the
-same v1 semantics; a breaking semantic change requires a new interface major
-and event schema. Export failure cannot alter publication status, bytes,
-receipts, or API output, and a bounded local failure audit is retained.
+The [interface manifest](agents/generation/mcp/axiomgraph_source_interface_v1.json)
+defines the consumer contract:
+
+| Field | Value |
+|---|---|
+| Interface version | `1.0` (minimum consumer minor: `0`) |
+| Required capability | `verified_publication_event_v1` |
+| Event schema | `axiomrelay_verified_publication_event_v1` |
+| Graph contract | `axiomgraph_contract_v1`, with the exact schema-bundle digest pinned in the manifest |
+
+Each event contains the exact target and blueprint bytes encoded as Base64,
+their SHA-256 digests, the publication receipt, the normalized ProofItem
+dependency graph, the stable verifier profile, and the loaded Core/export
+runtime digests. Events are canonical UTF-8 JSON with one final newline:
+
+```text
+agents/.claude_core/axiomgraph_exports/v1/
+  publications/<publication_receipt_sha256>/<event_id>/event.json
+  failures/<receipt_or_statement_sha256>/<failure_sha256>.json
+```
+
+Event ids have the form `arev_<64 lowercase hex characters>` and bind the
+complete event payload. Repeating an export with identical inputs reuses the
+same immutable file. Changed runtime bindings produce a distinct event, so one
+publication receipt can retain multiple events. Export is best effort: failure
+leaves publication status, proof bytes, receipts, and API output intact. The
+host attempts to save a bounded local diagnostic in `failures/`.
+
+A separately versioned AxiomGraph consumer validates and projects these source
+events. Before projection it must check the interface version, required
+capabilities, exact Graph schema digest, and expected runtime-source bindings.
+AxiomRelay writes the source files locally; this repository does not include a
+Graph consumer or automatic delivery service. Compatible Relay refactors retain
+the v1 semantics; a breaking semantic change requires a new interface major
+and event schema. The [protocol fixture](agents/generation/tests/fixtures/axiomgraph_source_interface_v1.json)
+provides a complete event and its expected digests for compatibility checks.
 
 The v1 wire bounds JSON nesting at 256 and the exact target at 4 MiB. The
 NFC/LF-normalized JSON object containing `problem_id` and `proof_context` is
 limited to 4 MiB minus 4096 bytes for fixed projection metadata. Stable-profile
 keys must remain distinct after normalization, and each proof item id binds
-the first 24 hexadecimal characters of its artifact SHA-256. The exporter and
-consumer enforce the same bounds before an event can become a projection.
+the first 24 hexadecimal characters of its artifact SHA-256. A stored event
+is limited to 192,000,000 bytes. Consumers must enforce the same bounds before
+an event can become a projection.
 
 This is not yet the stopped-unsolved takeover trigger. Automatic transfer to a
 Danus controller remains disabled until AxiomRelay can authenticate one exact
@@ -172,7 +203,7 @@ A route report, synthesis, draft, single verifier pass, or unreceipted
 | `reviewed` | Long-running compatibility workflow with scheduled reviews | GPT Astra | Higher overhead |
 
 Noninteractive runs default to `core`. Interactive runs explain the choices.
-The reviewed mode requires an explicit run ID.
+The reviewed mode requires an explicit run ID and the `compatible` profile.
 
 ### Roots
 
@@ -181,7 +212,7 @@ The reviewed mode requires an explicit run ID.
 | `gpt-astra` | GPT Astra designs routes and orchestrates proof work. Default. |
 | `opus` | Persistent logical Claude Opus 5 root; each launch performs one resumable turn. |
 | `fable` | Persistent Claude Fable 5 root with the same host controls. |
-| `opus-astra-council` | Opus and an isolated Astra/max seat design independently, revise once together, then run a final non-editing audit. |
+| `opus-astra-council` | Opus and an isolated Astra/max seat design independently, revise once together, then run a final non-editing audit. Requires `max_diversity`. |
 
 Claude roots are currently available in `core` mode only. They receive a
 read-only workspace view plus a narrow host interface; they do not receive
@@ -218,12 +249,16 @@ Use `gpt-astra` and `opus-astra-council`; the legacy `gpt-sol` and
 `opus-sol-council` command selectors remain accepted aliases. Explicit Sol
 model overrides are rejected before a new dispatch.
 
+Selecting `opus-astra-council` chooses `max_diversity` automatically when no
+profile is specified; explicitly choosing a different profile is rejected.
+Start the verifier and generation runner with the same
+`AXIOM_RELAY_MODEL_POLICY_PROFILE`.
+
 Existing sessions keep their original source/model bindings and require the
 normal source-drift takeover procedure after an upgrade. Historical Sol
 intents and receipts are authenticated against their original dispatch chain
 and retained byte-for-byte; they do not authorize a new Sol call. Stable
-transport identifiers such as `opus_sol_council_v2` are unchanged. Astra has
-not yet had a paid end-to-end canary in this checkout.
+transport identifiers such as `opus_sol_council_v2` are unchanged.
 
 Restart the verifier on the new release before starting generation. Every
 launch mode checks its advertised profile and rejects a ready service that
@@ -330,6 +365,8 @@ export VERIFY_TLS_TERMINATED=1
 ```
 
 ### 4. Run a problem
+
+Open a second terminal at the repository root, keeping the verifier running.
 
 Create a local UTF-8 Markdown statement below `agents/generation/data/`. Problem
 and answer files in that directory are intentionally ignored by Git. A nested
@@ -510,6 +547,8 @@ For `PROBLEM_FILE=data/my_problem.md`:
 | `agents/generation/results/my_problem/blueprint_verified.md` | Published proof bytes |
 | `agents/.verification_receipts/` | Trusted verification and publication receipts |
 | `agents/generation/memory/my_problem/` | Durable canonical research memory |
+| `agents/.claude_core/axiomgraph_exports/v1/publications/` | Immutable source events exported after Claude Core publication reconciliation |
+| `agents/.claude_core/axiomgraph_exports/v1/failures/` | Best-effort local export diagnostics |
 
 Interrupted verifier work resumes at the first unsettled item. Completed,
 compatible items are not replayed. Unknown execution status fails closed.
@@ -584,8 +623,21 @@ agents/verification/.venv/bin/python -m pytest -q agents/verification/tests
 Run the generation and launcher tests:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 \
+env -u CODEX_HOME PYTHONDONTWRITEBYTECODE=1 \
 agents/.generation-venv/bin/python -m pytest -q agents/generation/tests
+```
+
+Unsetting `CODEX_HOME` keeps a surrounding coding-agent session's configuration
+out of the launcher tests. Run these tests with generation roots stopped:
+their environment preflight needs the deployment lock held by an active root.
+
+For a focused check of this branch's source protocol and model profiles:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+agents/.generation-venv/bin/python -m pytest -q \
+  agents/generation/tests/test_publication_export_v1.py \
+  agents/generation/tests/test_model_policy.py
 ```
 
 After changing shared MCP or proof-context code, rebuild and check the generated
@@ -600,6 +652,15 @@ agents/.generation-venv/bin/python -B \
 
 No paid model is required for the test suites.
 
+Live validation on 2026-09-05 exercised `max_diversity`: Astra `max` rejected an
+invalid proof, and an independently supplied correct proof passed Astra `max`
+and cold Opus 5 `max` verification. The host published a v6 receipt and a v1
+AxiomGraph event; digest validation and repeated-read export idempotency passed.
+The full council search canary completed its sandboxed math experiment and
+blind phase, but the Astra revision process exited nonzero after 704 seconds
+(`operational_blocked`). That run produced no proof or publication, so complete
+council search remains unvalidated by this canary.
+
 ## Repository map
 
 | Path | Purpose |
@@ -609,6 +670,8 @@ No paid model is required for the test suites.
 | `agents/claude_core.py` | Persistent Claude-root host and route-council control plane |
 | `agents/model_policy.py` | Zero-model role and profile resolver |
 | `agents/MODEL_POLICY.md` | Detailed model-role and compatibility contract |
+| [publication_export_v1.py](agents/generation/mcp/publication_export_v1.py) | Standard-library source-event validation and immutable storage |
+| [axiomgraph_source_interface_v1.json](agents/generation/mcp/axiomgraph_source_interface_v1.json) | Versioned AxiomGraph source-interface manifest |
 | `agents/generation/site/` | Optional Zola result browser; presentation only |
 
 ## License

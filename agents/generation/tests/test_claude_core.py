@@ -9,6 +9,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tomllib
@@ -6803,9 +6804,14 @@ def test_root_math_experiment_is_bounded_write_once_and_receipted(
             "permissions.axiom-relay-root-math.filesystem="
         )
     )
-    assert str(claude_core.AGENTS_ROOT.parent.resolve()) in filesystem
-    assert '="deny"' in filesystem
-    assert str(python_bin) in filesystem
+    permissions = tomllib.loads(filesystem)["permissions"][
+        "axiom-relay-root-math"
+    ]["filesystem"]
+    assert permissions[":root"] == "deny"
+    assert permissions[":minimal"] == "read"
+    assert permissions[str(python_bin)] == "read"
+    assert str(claude_core.AGENTS_ROOT.parent.resolve()) not in permissions
+    assert str(Path.home().resolve()) not in permissions
 
     replayed = claude_core.run_math_experiment(**arguments)
     assert replayed["status"] == "existing"
@@ -6879,32 +6885,61 @@ def test_root_math_experiment_real_sandbox_denies_repository(
     monkeypatch.setattr(claude_core, "STATE_ROOT", tmp_path / "state")
     monkeypatch.setattr(claude_core, "PYTHON_BIN", python_bin)
 
-    code = (
-        "import pathlib, scipy\n"
-        "print('scipy', scipy.__version__)\n"
-        f"target = pathlib.Path({str(protected_path)!r})\n"
-        "try:\n"
-        "    target.read_text()\n"
-        "except PermissionError:\n"
-        "    print('repository-denied')\n"
-        "else:\n"
-        "    raise SystemExit('repository unexpectedly readable')\n"
-    )
-    result = claude_core.run_math_experiment(
-        problem_id="example",
-        statement_sha256=statement_sha256,
-        root_session_id="12345678-1234-4123-8123-123456789abc",
-        experiment_id="exp_real_sandbox",
-        purpose="Verify the real math sandbox boundary.",
-        code=code,
-        timeout_seconds=20,
-        codex_bin=codex_bin,
-        expected_python_runtime_sha256=python_sha256,
-        expected_host_source_sha256=claude_core._host_source_sha256(),
-    )
-    assert result["execution"]["execution_status"] == "completed"
+    with tempfile.TemporaryDirectory(
+        prefix=".axiom-math-test-", dir=Path.home()
+    ) as raw_home_probe:
+        home_probe = Path(raw_home_probe) / "sentinel.txt"
+        home_probe.write_text("nonsecret sandbox test sentinel\n")
+        targets = [
+            ("repository", str(protected_path)),
+            ("home", str(home_probe)),
+        ]
+        code = (
+            "import pathlib, scipy\n"
+            "print('scipy', scipy.__version__)\n"
+            f"for label, target in {targets!r}:\n"
+            "    try:\n"
+            "        pathlib.Path(target).read_text()\n"
+            "    except (PermissionError, FileNotFoundError):\n"
+            "        print(label + '-denied')\n"
+            "    else:\n"
+            "        raise SystemExit(label + ' unexpectedly readable')\n"
+        )
+        result = claude_core.run_math_experiment(
+            problem_id="example",
+            statement_sha256=statement_sha256,
+            root_session_id="12345678-1234-4123-8123-123456789abc",
+            experiment_id="exp_real_sandbox",
+            purpose="Verify the real math sandbox boundary.",
+            code=code,
+            timeout_seconds=20,
+            codex_bin=codex_bin,
+            expected_python_runtime_sha256=python_sha256,
+            expected_host_source_sha256=claude_core._host_source_sha256(),
+        )
+    assert result["execution"]["execution_status"] == "completed", result[
+        "execution"
+    ]["stderr"]
     assert "scipy " in result["execution"]["stdout"]
     assert "repository-denied\n" in result["execution"]["stdout"]
+    assert "home-denied\n" in result["execution"]["stdout"]
+
+
+@pytest.mark.parametrize("runtime_root", ["repository", "home"])
+def test_math_experiment_rejects_runtime_grants_exposing_private_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runtime_root: str
+) -> None:
+    protected = (
+        claude_core.AGENTS_ROOT.parent
+        if runtime_root == "repository"
+        else Path.home()
+    )
+    monkeypatch.setattr(sys, "prefix", str(protected))
+    with pytest.raises(claude_core.ClaudeCoreError, match="unsafe broad root"):
+        claude_core._math_sandbox_filesystem_toml(
+            sandbox_root=tmp_path,
+            codex_bin=_SYSTEM_TRUE,
+        )
 
 
 def test_manual_reference_candidate_ingest_uses_private_inbox_and_is_idempotent(

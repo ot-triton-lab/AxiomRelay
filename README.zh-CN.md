@@ -12,6 +12,9 @@ AxiomRelay 用来编排长篇数学证明，重点是失败恢复和结果审计
 
 > **当前状态：** 这是研究型基础设施。流程、来源和重放记录都有严格约束，但模型验证仍可能出错，不能代替专家审稿。
 
+本 README 对应 `axiomgraph-v1` 分支：新增版本化 AxiomGraph publication event，
+将原先使用 Sol 的 OpenAI 角色迁移至 GPT-6 Astra，并支持 Claude root 运行有界数学实验。
+
 ## 为什么需要 AxiomRelay
 
 普通的聊天循环很难稳妥处理高难度证明。几条看似不同的路线，可能其实来自同一个想法。对话拉长以后，早期前提也容易悄悄漂移。外部建议可能被误当成已经证明的结论，失败重试还会重复触发昂贵的模型调用。一份接近正确的草稿，也很容易被当成已经验证过的定理。
@@ -56,7 +59,7 @@ owner 把这个具体问题交给 GPT Pro（可选，带 SHA 绑定）
 GPT Pro 只在少数关键 gap 上提供建议，相当于一个低频调用的 **gap oracle**（缺口顾问）。它的输出仍是参考，不带证明权威。其余角色各管一段：
 
 - root 保存当前状态，决定下一步处理哪个瓶颈。
-- 相互隔离的 Astra lanes 负责尝试不同方向。
+- 相互隔离的证明 lanes 按所选模型配置尝试不同方向。
 - Pro 可以给出关键的局部论证或反例，但内容仍需审计。
 - verifier 最后检查的是完整证明。
 
@@ -76,7 +79,8 @@ Pro 的回答即使不成立，也不会抹掉此前的进度。若其中某一�
                                         |
                                一份获准执行的三路线计划
                                         v
-                            三条隔离的 GPT Astra 证明 lane
+                               三条隔离的证明 lane
+                                模型由 profile 决定
                               |         |         |
                               +---------+---------+
                                         v
@@ -94,27 +98,50 @@ Pro 的回答即使不成立，也不会抹掉此前的进度。若其中某一�
 
 Host 负责准入、fencing（隔离并作废旧实例）、恢复和发布。root 设计路线并综合证明。证明 lane 不能继续派生 agent，verifier 也没有编辑或发布证明的权限。
 
-### AxiomGraph 桥接（实验性基础）
+### AxiomGraph source interface v1（实验性）
 
-当 `rethlas-publication-v6` 已经通过原有权威流程完成 reconcile 后，host 会通过一个
-版本化、仅使用标准库的 wire interface，以 best-effort 方式写出不可变 source event。
-规范 manifest 固定在 `agents/generation/mcp/axiomgraph_source_interface_v1.json`。
-每个 event 都绑定题目和 blueprint 的精确字节、publication receipt、规范化 ProofItem
-DAG、稳定 verifier profile，以及实际加载的 Core/export runtime digest；event 按
-publication receipt 与 event id 保存在
-`agents/.claude_core/axiomgraph_exports/v1/publications`。
+Claude Core host 在完成有效 `rethlas-publication-v6` 发布结果的 reconcile 后，
+会自动尝试导出本地 source event。查询已有 publication 时也会重试导出。
+导出发生在原有两轮验证与发布检查之后，只使用 Python 标准库，无需安装 AxiomGraph。
 
-AxiomRelay 不再 import AxiomGraph，也不在内部构造 AxiomGraph 对象。独立版本的 consumer
-读取这套 source protocol，并且只有在核对 interface major/minor、required capability、
-精确 AxiomGraph schema digest 和 runtime source binding 后才能转换 event。因此，Relay
-内部重构只要继续保持 v1 语义就能兼容；破坏语义的修改必须发布新的 interface major 与
-event schema。export 失败不会改变原 publication 状态、字节、receipt 或 API 返回值，
-同时会留下有界的本地失败审计。
+[接口 manifest](agents/generation/mcp/axiomgraph_source_interface_v1.json)
+定义了 consumer 必须遵守的约定：
+
+| 字段 | 值 |
+|---|---|
+| 接口版本 | `1.0`，consumer minor 最低为 `0` |
+| 必需 capability | `verified_publication_event_v1` |
+| Event schema | `axiomrelay_verified_publication_event_v1` |
+| Graph contract | `axiomgraph_contract_v1`，精确 schema-bundle digest 固定在 manifest 中 |
+
+每个 event 包含以 Base64 编码的原题与 blueprint 精确字节、对应 SHA-256、
+publication receipt、规范化 ProofItem 依赖图、稳定 verifier profile，以及实际
+加载的 Core/export runtime digest。文件使用规范化 UTF-8 JSON，末尾保留一个换行：
+
+```text
+agents/.claude_core/axiomgraph_exports/v1/
+  publications/<publication_receipt_sha256>/<event_id>/event.json
+  failures/<receipt_or_statement_sha256>/<failure_sha256>.json
+```
+
+Event id 格式为 `arev_<64 位小写十六进制字符>`，绑定完整 event payload。
+相同输入重复导出会复用同一个不可变文件；runtime binding 改变时会生成不同的
+event，因此一个 publication receipt 下可以保留多个 event。导出采用 best-effort
+方式，失败不会改变发布状态、证明字节、receipt 或 API 返回值。Host 会尝试在
+`failures/` 中保存有界的本地诊断。
+
+独立版本的 AxiomGraph consumer 负责验证这些 source event 并构造投影。投影前必须
+核对接口版本、必需 capability、精确 Graph schema digest 和预期 runtime source
+binding。AxiomRelay 在本地写出 source 文件；本仓库不包含 Graph consumer 或自动
+传输服务。兼容的 Relay 内部重构保留 v1 语义；破坏语义的修改必须发布新的 interface
+major 与 event schema。[协议 fixture](agents/generation/tests/fixtures/axiomgraph_source_interface_v1.json)
+提供完整 event 和预期 digest，可用于兼容性检查。
 
 v1 wire 的 JSON 嵌套上限为 256，原题上限为 4 MiB。经过 NFC/LF 规范化的
 `problem_id` 与 `proof_context` JSON 对象上限为 4 MiB 减 4096 字节，预留空间用于
 固定的投影元数据。稳定 profile 的 key 规范化后不得碰撞，每个 proof item id 必须
-绑定 artifact SHA-256 的前 24 位。exporter 与 consumer 在投影前执行相同的边界校验。
+绑定 artifact SHA-256 的前 24 位。存储的 event 上限为 192,000,000 字节。
+Consumer 在投影前必须执行相同的边界校验。
 
 这还不是 `stopped_unsolved` 的自动接管触发器。只有当 AxiomRelay 能认证同一个终局
 cohort、source state、没有未完成的 owner/Pro wait，并完成 lease/fence CAS 后，才会
@@ -142,7 +169,7 @@ cohort、source state、没有未完成的 owner/Pro wait，并完成 lease/fenc
 | `core` | 默认隔离运行时 | GPT Astra、Opus、Fable、Opus + Astra council | 较低开销 |
 | `reviewed` | 保留定时 review 的长期兼容流程 | GPT Astra | 较高开销 |
 
-非交互运行默认选择 `core`。交互运行会列出各选项并给出说明。使用 `reviewed` 时必须显式提供 run ID。
+非交互运行默认选择 `core`。交互运行会列出各选项并给出说明。使用 `reviewed` 时必须显式提供 run ID，且只能使用 `compatible` 配置。
 
 ### Root
 
@@ -151,7 +178,7 @@ cohort、source state、没有未完成的 owner/Pro wait，并完成 lease/fenc
 | `gpt-astra` | 默认选项。由 GPT Astra 设计路线并编排证明工作。 |
 | `opus` | 逻辑身份可持续的 Claude Opus 5 root。每次启动推进一个可恢复的 turn。 |
 | `fable` | 逻辑身份可持续的 Claude Fable 5 root，受与 `opus` 相同的 host 管控。 |
-| `opus-astra-council` | Opus 和隔离的 Astra/max seat 分别设计路线，共同修订一次，最后做只读审计。 |
+| `opus-astra-council` | Opus 和隔离的 Astra/max seat 分别设计路线，共同修订一次，最后做只读审计。要求使用 `max_diversity`。 |
 
 Claude root 目前只能用于 `core` 模式。它只能查看只读 workspace，并通过少量 host 接口执行规定动作。通用 shell、文件写入、浏览器和 subagent 权限均未开放。
 
@@ -173,10 +200,13 @@ Claude root 目前只能用于 `core` 模式。它只能查看只读 workspace�
 `opus-astra-council`，旧的 `gpt-sol`、`opus-sol-council` 仍作为兼容别名接受。
 显式指定旧 Sol 模型的新调用会在执行前被拒绝。
 
+选择 `opus-astra-council` 而未指定 profile 时，启动器自动使用 `max_diversity`；
+显式指定其他 profile 会被拒绝。Verifier 与生成端必须使用相同的
+`AXIOM_RELAY_MODEL_POLICY_PROFILE`。
+
 已有 session 保留原有源码与模型绑定，升级后走 source-drift 接管流程。
 历史 Sol intent 和 receipt 按原始 dispatch 校验链认证并保留原始字节，不能
 据此重新调用 Sol。`opus_sol_council_v2` 等持久化协议标识不改名。
-本次尚未执行 Astra 的付费端到端 canary。
 
 启动新任务前应先用新版本重启 verifier。所有启动模式都会检查其声明的
 profile；即使健康检查 ready，仍选择 Sol 的旧服务也不能启动新付费任务。
@@ -276,6 +306,8 @@ export VERIFY_TLS_TERMINATED=1
 ```
 
 ### 4. 运行题目
+
+保持 verifier 运行，另开一个终端并进入仓库根目录。
 
 先在本地把 UTF-8 Markdown 格式的题目放进 `agents/generation/data/`。这个目录里的题目和答案默认不会提交到 Git。目录层级会保留在结果路径中，例如 `data/algebra/problem.md` 的输出位于 `results/algebra/problem/`。
 
@@ -416,6 +448,8 @@ agents/.generation-venv/bin/python -I -B agents/claude_core.py \
 | `agents/generation/results/my_problem/blueprint_verified.md` | 正式发布的证明内容 |
 | `agents/.verification_receipts/` | 可信的 verification 和 publication receipts |
 | `agents/generation/memory/my_problem/` | 持久保存的 canonical research memory |
+| `agents/.claude_core/axiomgraph_exports/v1/publications/` | Claude Core 完成发布 reconcile 后导出的不可变 source event |
+| `agents/.claude_core/axiomgraph_exports/v1/failures/` | 尽力保存的本地导出诊断 |
 
 Verifier 中断后会从第一个尚未判定的 item 继续，已经完成且仍兼容的 item 不会重跑。若无法判断某项调用到底是否执行过，系统会按失败处理（fail closed）。
 
@@ -479,8 +513,21 @@ agents/verification/.venv/bin/python -m pytest -q agents/verification/tests
 运行 generation 和 launcher 测试：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 \
+env -u CODEX_HOME PYTHONDONTWRITEBYTECODE=1 \
 agents/.generation-venv/bin/python -m pytest -q agents/generation/tests
+```
+
+清除测试进程的 `CODEX_HOME`，避免继承外层 coding-agent session 的配置。
+执行这组测试时应先停止生成任务：环境预检需要获取正在运行的 root 持有的
+部署锁。
+
+只检查本分支的 source protocol 和模型配置：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+agents/.generation-venv/bin/python -m pytest -q \
+  agents/generation/tests/test_publication_export_v1.py \
+  agents/generation/tests/test_model_policy.py
 ```
 
 修改共享 MCP 或 proof-context 代码后，需要重新生成并检查 legacy server：
@@ -494,6 +541,14 @@ agents/.generation-venv/bin/python -B \
 
 这些测试不会触发付费模型调用。
 
+2026-09-05 的真实模型测试使用 `max_diversity`：Astra `max` 拒绝了错误证明；
+一份独立提供的正确证明通过了 Astra `max` 和 cold Opus 5 `max` 两轮验证。
+Host 生成了 v6 发布收据和 v1 AxiomGraph 事件，摘要校验与重复读取的导出
+幂等性检查均通过。完整 council 搜索 canary 完成了沙箱数学实验和 blind
+阶段，但 Astra 联合修订进程在 704 秒后以非零状态退出
+（`operational_blocked`）。该搜索未生成证明或发布结果，因此本次 canary
+尚未验证完整 council 搜索流程。
+
 ## 仓库结构
 
 | 路径 | 用途 |
@@ -503,6 +558,8 @@ agents/.generation-venv/bin/python -B \
 | `agents/claude_core.py` | 持久 Claude root 的 host，以及 route-council 控制平面 |
 | `agents/model_policy.py` | 不调用模型的角色和 profile 解析器 |
 | `agents/MODEL_POLICY.md` | 模型角色和兼容性约束的详细说明 |
+| [publication_export_v1.py](agents/generation/mcp/publication_export_v1.py) | 仅依赖标准库的 source event 验证与不可变存储 |
+| [axiomgraph_source_interface_v1.json](agents/generation/mcp/axiomgraph_source_interface_v1.json) | 版本化 AxiomGraph source interface manifest |
 | `agents/generation/site/` | 可选的 Zola 结果浏览器，只负责展示 |
 
 ## 许可证

@@ -4049,12 +4049,19 @@ def _math_sandbox_filesystem_toml(
         resolved_codex,
         resolved_codex.parent,
     }
-    if any(path == Path("/") for path in runtime_roots):
+    if any(
+        path == Path("/")
+        or repository_root.is_relative_to(path)
+        or home_root.is_relative_to(path)
+        for path in runtime_roots
+    ):
         raise ClaudeCoreError("math runtime resolved to an unsafe broad root")
+    # Deny by default, then expose only the runtime and empty work directory.
+    # Explicit denies on home/repository ancestors mask the nested interpreter
+    # or Codex binary and can make bubblewrap fail while constructing mounts.
     entries: dict[str, str] = {
+        ":root": "deny",
         ":minimal": "read",
-        str(home_root): "deny",
-        str(repository_root): "deny",
     }
     for path in sorted(runtime_roots, key=lambda item: (len(str(item)), str(item))):
         entries[str(path)] = "read"

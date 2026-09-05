@@ -1017,7 +1017,9 @@ if isolation_probe and "exec" in sys.argv:
             root / expected_candidate
         ).is_file(),
         "current_memory": (root / "memory" / "example" / "current.txt").is_file(),
-        "current_results": (root / "results" / "example" / "current.txt").is_file(),
+        # The fixture removes this output directory before launch; the runner
+        # must recreate it and expose it inside the cohort capsule.
+        "current_results": (root / "results" / "example").is_dir(),
         "other_problem": (root / "data" / "other.md").exists(),
         "other_plan": (root / ".claude_core_inputs" / "other").exists(),
         "other_statement_candidate_projection": (
