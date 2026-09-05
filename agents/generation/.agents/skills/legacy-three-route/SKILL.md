@@ -87,6 +87,10 @@ recovery.
    child to read and audit that complete unverified reference candidate. The child must
    either complete that mechanism or report its first fatal mathematical gap;
    silently substituting another proof does not complete the route.
+   For a Claude-owned external plan, also tell every child to keep partial
+   work out of `results/{problem_id}/blueprint.md`. Partial mathematics belongs
+   in its terminal report or separately named notes. Only a complete candidate
+   may enter the working-blueprint and verifier path.
 3. Require one report targeting at most 12,000 UTF-8 bytes, with a hard limit
    of 16,384 bytes, containing plan id, status (`candidate|partial|blocked`),
    concrete proof steps or counterexample, remaining obligations, and decisive
@@ -138,6 +142,12 @@ Do not append or rewrite their report bodies at cohort close. Invoke
 with one single-item `memory_append_batch` checkpoint. Never call
 `memory_append` for the synthesis: only the batch receipt makes the completed
 unverified cohort reconstructible by the host.
+
+For a Claude-owned external plan, return after this synthesis without creating
+or rewriting `blueprint.md`. Even an explicitly unverified summary there adds
+a frontier change outside the exact permitted reports-and-synthesis delta,
+so the host must reject `completed_unverified` settlement. This restriction
+does not apply to the complete-candidate verifier fast lane.
 
 Legacy has no `continuous_round_finish`. A later paid root or later full fanout
 is useful only when these durable records expose a genuinely new mechanism or

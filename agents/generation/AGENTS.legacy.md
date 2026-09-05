@@ -83,6 +83,16 @@ under the post-checkpoint budget below. General web and browser access remain
 forbidden in either mode. A complete child candidate still enters the ordinary
 verifier fast lane.
 
+For this external-plan mode, a non-candidate round may change the trusted
+frontier only through the prescribed plan checkpoint, the three exact terminal
+reports, and their shared `stop_unsolved` synthesis. Do not create or rewrite
+`results/{problem_id}/blueprint.md` to collect partial results: that extra draft
+change prevents `completed_unverified` settlement. Keep partial mathematics in
+the terminal reports and, when needed, separately named notes under the current
+problem's results directory. Give this restriction to all three children.
+Writing the working blueprint is reserved for a complete candidate entering
+the verifier fast lane; this does not weaken that path.
+
 The host runs that external-plan executor inside a per-problem filesystem
 capsule. Its visible statement, exact plan, current-problem memory/results, and
 trusted skills/MCP runtime are the complete authorized local inputs. Do not
