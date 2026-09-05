@@ -6,6 +6,7 @@ import json
 import os
 import py_compile
 import selectors
+import shlex
 import shutil
 import sqlite3
 import stat
@@ -10555,6 +10556,45 @@ def test_runner_ordinary_unfinished_turn_stops_without_frontier_progress(
     assert not (Path(environment["LOG_DIR"]) / "example_iter_1.md").exists()
     assert "No trusted Legacy frontier delta after iter=0" in completed.stderr
     assert "produced no trusted frontier progress" in completed.stderr
+
+
+def test_legacy_transcript_streams_before_eof_and_preserves_all_bytes() -> None:
+    source = LEGACY_RUNNER.read_text(encoding="utf-8")
+    opening = '  ) 2>&1 | "$TRUSTED_PYTHON_BIN" -I -B -c \\\n    '
+    start = source.index(opening) + len(opening)
+    end = source.index('\n    >"$log_file"', start)
+    command_fragment = source[start:end].rstrip()
+    assert command_fragment.endswith("\\")
+    forwarder_args = shlex.split(command_fragment[:-1])
+    assert len(forwarder_args) == 1
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-B", "-c", forwarder_args[0]],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        assert process.stdin is not None
+        assert process.stdout is not None
+        marker = b"collab: three route solvers started\n"
+        process.stdin.write(marker)
+        process.stdin.flush()
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            assert selector.select(timeout=5), (
+                "Progress must reach the transcript while its writer is still open"
+            )
+        assert process.stdout.read(len(marker)) == marker
+        assert process.poll() is None
+
+        remainder = bytes(range(256)) * 1024 + b"deferred continuation complete\n"
+        output, error = process.communicate(input=remainder, timeout=5)
+        assert process.returncode == 0, error
+        assert output == remainder
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=5)
 
 
 def test_legacy_waits_for_detached_collaboration_log_writer_before_frontier_check(

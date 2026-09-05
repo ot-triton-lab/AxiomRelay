@@ -3087,7 +3087,10 @@ for ((iter = 0; iter < MAX_ITERATIONS; iter += 1)); do
       "$CODEX_BIN" "${codex_arguments[@]}"
     fi
   ) 2>&1 | "$TRUSTED_PYTHON_BIN" -I -B -c \
-    'import shutil, sys; shutil.copyfileobj(sys.stdin.buffer, sys.stdout.buffer)' \
+    'import sys
+while block := sys.stdin.buffer.read1(65536):
+    sys.stdout.buffer.write(block)
+    sys.stdout.buffer.flush()' \
     >"$log_file"
   pipeline_status=("${PIPESTATUS[@]}")
   set -e
