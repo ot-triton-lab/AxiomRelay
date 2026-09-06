@@ -60,6 +60,12 @@ def legacy_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType
     sys.modules.pop(verification_module_name, None)
 
 
+def test_graph_native_identity_cannot_create_legacy_memory(legacy_server: ModuleType) -> None:
+    with pytest.raises(ValueError, match="AxiomGraph source gate"):
+        legacy_server.memory_init("axiomgraph:gr1_" + "a" * 64)
+    assert not legacy_server.MEMORY_ROOT.exists()
+
+
 def test_legacy_memory_is_local_idempotent_and_control_free(
     legacy_server: ModuleType,
 ) -> None:

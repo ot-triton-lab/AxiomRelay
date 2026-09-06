@@ -594,6 +594,8 @@ def _sanitize_problem_component(raw: str) -> str:
 def sanitize_problem_id(raw: str) -> str:
     """Return a safe problem id while preserving relative path components."""
     normalized = raw.strip().replace('\\', '/')
+    if any((part.strip().startswith('axiomgraph:') for part in normalized.split('/'))):
+        raise ValueError('graph-native identities require the AxiomGraph source gate; legacy normalization is forbidden')
     parts: List[str] = []
     for part in normalized.split('/'):
         stripped = part.strip()

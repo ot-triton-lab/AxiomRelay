@@ -178,6 +178,24 @@ CAS. A bounded `stop_unsolved` result is evidence that the fast path stopped;
 it must never be relabeled as proof that the theorem is mathematically
 impossible.
 
+### Graph-native transfer component (controlled integration)
+
+`agents/axiomgraph_adapter.py` provides an optional `RelayGraphExecutor` over a
+deployment-configured AxiomGraph operational v3 source. Its separate capability
+is `stopped_unsolved_transfer_v1`, not the publication Git capability above.
+Fresh runs use the reserved non-path identity `axiomgraph:gr1_…`; the existing
+Claude/hot-join/legacy runners and memory/publication entry points reject that
+identity rather than bypassing the source gate or normalizing a legacy alias.
+
+The source admits the sealed cohort, authenticates completed route-report
+preimages and current proof receipts, freezes an unsolved export, and changes
+controller only through its single source CAS after durable destination
+preparation. Tests in AxiomGraph exercise this facade and the Danus consumer,
+including a subsequent independently checked proof of the unchanged original
+target. This does not activate paid workers, import existing legacy cohorts or
+reinterpret unanswered manual Pro queries as terminal. Real service/provider
+wiring and production enrollment remain explicit deployment requirements.
+
 ## What counts as success
 
 A run succeeds only when all of the following are true:

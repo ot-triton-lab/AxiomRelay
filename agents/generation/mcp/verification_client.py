@@ -7046,6 +7046,9 @@ def verify_blueprint_file(
 ) -> Dict[str, Any]:
     """Verify a draft and promote it only if its content is still unchanged."""
 
+    if ((isinstance(problem_id, str) and "axiomgraph:" in problem_id)
+            or any("axiomgraph:" in str(path) for path in (draft_path, verified_path))):
+        raise ValueError("graph-native verification requires the AxiomGraph source admission gate")
     if not isinstance(statement, str) or not statement.strip():
         raise ValueError("statement must be non-empty")
     if timeout_seconds <= 0:

@@ -423,8 +423,8 @@ RUNTIME_DEPENDENCY_MANIFEST_SCHEMA = "rethlas_claude_runtime_dependencies_v1"
 RUNTIME_DEPENDENCY_SHA256 = {
     "CLAUDE.md": "1771ea2d90324a768bdc1155f87260b7fbfef113f31a238f099c79ea81561c5f",
     ".mcp.json": "b69488ba8934f965cc58e3f02907d8e9b1129bf3558637655ddfd8e1eba3c177",
-    "mcp/legacy_server.py": "3601b1409986e9d8a916bf984d4aae8b89b7237d81e92ab39d5bf5eb7966eaa5",
-    "mcp/legacy_verification_client.py": "a84cc93af6c538e665078f277417223d96ea54d1cd5b64e533dc576ba40517b7",
+    "mcp/legacy_server.py": "10b251ab7525a961d547c42e9d46de602cdd9fcf7c71e3a55b0a4ec5a988f294",
+    "mcp/legacy_verification_client.py": "5dcf0f7b3ea59d7a3c55fc7d0eb758628ba01e8b7494ad793a2d7333bde2b9a9",
     "mcp/proof_context.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166",
     "mcp/publication_proof_context_v3.py": "705bb85d235bd3b28cec078655e71cf55d06c9b63d96f8d81f9f83e91ee9f166",
     "mcp/publication_export_v1.py": "f1ef0cd0ed2c91a69ab48a53e804d6834f8ae02f94c3f4952310441603c487c5",

@@ -1411,6 +1411,10 @@ codex_command="$codex_target"
 
 problem_id="${PROBLEM_FILE#data/}"
 problem_id="${problem_id%.md}"
+if [[ "$problem_id" == *axiomgraph:* ]]; then
+  echo "Graph-native identities require the AxiomGraph source gate, not a Claude root runner." >&2
+  exit 1
+fi
 draft_path="results/${problem_id}/blueprint.md"
 verified_path="results/${problem_id}/blueprint_verified.md"
 reference_dir="data/${problem_id}.refs"

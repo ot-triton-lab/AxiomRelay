@@ -2179,6 +2179,8 @@ def validate_service_response(payload: object, *, expected_proof_digest: str, ex
 
 def verify_blueprint_file(*, statement: str, draft_path: Path, verified_path: Path, endpoint: str, verification_deadline_utc: str | None=None, timeout_seconds: int=3600, api_token: str | None=None, receipt_path: Path | None=None, problem_id: str | None=None, blueprint_root: Path | None=None, publication_state_root: Path | None=None, verification_quorum: int=2, supersedes: list[dict[str, str]] | None=None, verification_profile: str | None=None, on_verifier_dispatch: Callable[[], None] | None=None, prepared_only: bool=False, publication_authority_intent_sha256: str | None=None, on_publication_admission_recovery: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None=None, resume_dispatched: bool=False) -> Dict[str, Any]:
     """Verify a draft and promote it only if its content is still unchanged."""
+    if isinstance(problem_id, str) and 'axiomgraph:' in problem_id or any(('axiomgraph:' in str(path) for path in (draft_path, verified_path))):
+        raise ValueError('graph-native verification requires the AxiomGraph source admission gate')
     if not isinstance(statement, str) or not statement.strip():
         raise ValueError('statement must be non-empty')
     if timeout_seconds <= 0:

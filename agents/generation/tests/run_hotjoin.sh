@@ -2055,6 +2055,10 @@ fi
 # data/algebra/prob1.md -> algebra/prob1
 problem_rel="${PROBLEM_FILE#data/}"
 problem_rel="${problem_rel%.md}"
+if [[ "$problem_rel" == *axiomgraph:* ]]; then
+  echo "Graph-native identities require the AxiomGraph source gate, not a hot-join runner." >&2
+  exit 1
+fi
 problem_name="$(basename "$PROBLEM_FILE" .md)"
 ref_dir="data/${problem_rel}.refs"
 ref_prompt="Use reference_dir=${ref_dir} if it exists."
