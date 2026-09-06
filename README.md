@@ -599,6 +599,21 @@ the matching takeover and session UUIDs. The new root must complete a fresh
 route council and normal proof verification; this owner operation is not
 available to research agents through MCP.
 
+If that successor stops before any admission because its deployment changed,
+owner tooling can use `claude_core.py --transfer-council-restart PROBLEM_ID
+STATEMENT_SHA256 UNUSED_ROOT_UUID NEXT_ROOT_UUID CANDIDATE_PACKET_SHA256 REASON`
+in the new launcher's pinned environment. This supports one direct transfer:
+the unused root must still be active, its original authorization must match its
+historical deployment, and every candidate, frontier, and settled receipt must
+remain unchanged. A write-once sidecar binds the next UUID and new deployment;
+the old authorization and receipts remain intact. An admitted council, orphaned
+intent, pending effect, changed packet, or second transfer is rejected. Then
+launch the exact next UUID with the unused root as the takeover source.
+Both restart commands are also accepted by
+`agents/generation/tests/run_claude_core.sh`, which establishes the pinned
+execution environment before invoking the owner operation and exits without
+starting a model.
+
 ## Configuration
 
 | Setting | Meaning |

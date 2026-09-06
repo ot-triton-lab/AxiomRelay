@@ -7713,6 +7713,33 @@ def prepare_root_manifest(
                             "terminal cohort is completed unverified or its "
                             "recovery budget is exhausted"
                         )
+            elif active.get("orchestration_mode") in {
+                OPUS_SOL_COUNCIL_MODE_PREVIOUS, OPUS_SOL_COUNCIL_MODE,
+            }:
+                inherited = _nearest_predecessor_council_pointer(
+                    problem_id=problem_id, statement_sha256=statement_sha256,
+                    manifest=predecessor_manifest,
+                )
+                if inherited is not None and inherited[0]["state"] == "consumed":
+                    inherited_pointer, _inherited_path, inherited_root = inherited
+                    _terminal, seen, terminal, terminal_path = _settled_terminal_council_cohort(
+                        problem_id=problem_id, statement_sha256=statement_sha256,
+                        root_session_id=inherited_root,
+                        plan_sha256=str(inherited_pointer["final_plan_sha256"]),
+                        initial_cohort_id=str(inherited_pointer["cohort_id"]),
+                    )
+                    if (
+                        terminal["status"] != "completed_unverified"
+                        and not _cohort_recovery_budget_exhausted(receipt=terminal, seen_cohorts=seen)
+                        and not _owner_council_restart_authorized(
+                            problem_id=problem_id, statement_sha256=statement_sha256,
+                            root_session_id=inherited_root,
+                            successor_root_session_id=root_session_id,
+                            pointer=inherited_pointer, receipt=terminal,
+                            receipt_path=terminal_path,
+                        )
+                    ):
+                        raise ClaudeCoreError("inherited failed council requires an exact owner restart authorization")
             root_epoch = active["root_epoch"] + 1
             previous_root_session_id = active["root_session_id"]
         root_dir = _mkdir_state_subdir(
@@ -18734,6 +18761,44 @@ def _owner_council_restart_authorized(
     value = _read_canonical_object(
         path, label="owner council restart authorization", maximum_bytes=16_384,
     )
+    abandoned_root = value.get("successor_root_session_id")
+    if abandoned_root == successor_root_session_id:
+        abandoned_dir = path.parent.parent / successor_root_session_id
+        if any(
+            (abandoned_dir / name).exists() or (abandoned_dir / name).is_symlink()
+            for name in ("owner_restart_transfer.json", "source_drift_fence.json")
+        ):
+            raise ClaudeCoreError("owner restart authorization was transferred; the abandoned root is fenced")
+    if (
+        abandoned_root != successor_root_session_id
+        and isinstance(abandoned_root, str)
+        and SESSION_ID_RE.fullmatch(abandoned_root) is not None
+    ):
+        transfer_path = path.parent.parent / abandoned_root / "owner_restart_transfer.json"
+        if transfer_path.exists() or transfer_path.is_symlink():
+            expected = _owner_restart_transfer_binding(
+                problem_id=problem_id, statement_sha256=statement_sha256,
+                source_root_session_id=root_session_id,
+                abandoned_root_session_id=abandoned_root,
+                successor_root_session_id=successor_root_session_id,
+                pointer=pointer, receipt=receipt, receipt_path=receipt_path,
+            )
+            transfer = _read_canonical_object(
+                transfer_path, label="owner restart transfer", maximum_bytes=16_384,
+            )
+            _validate_owner_restart_record(transfer, expected)
+            fence_path = transfer_path.with_name("source_drift_fence.json")
+            fence = _read_canonical_object(
+                fence_path, label="owner restart transfer retirement fence", maximum_bytes=16_384,
+            )
+            if fence != transfer or sha256_file(fence_path) != sha256_file(transfer_path):
+                raise ClaudeCoreError("restart transfer retirement fence differs from its authorization")
+            if (
+                expected_candidate_packet_sha256 is not None
+                and expected["candidate_packet_sha256"] != expected_candidate_packet_sha256
+            ):
+                raise ClaudeCoreError("owner restart transfer candidate packet mismatch")
+            return True
     expected = _owner_council_restart_binding(
         problem_id=problem_id, statement_sha256=statement_sha256,
         root_session_id=root_session_id,
@@ -18756,6 +18821,214 @@ def _owner_council_restart_authorized(
     ):
         raise ClaudeCoreError("owner council restart authorization binding mismatch")
     return True
+
+
+def _validate_owner_restart_record(
+    value: Mapping[str, Any], expected: Mapping[str, Any],
+) -> None:
+    if (
+        set(value) != set(expected) | {"reason", "authorized_at_unix"}
+        or any(value.get(key) != item for key, item in expected.items())
+        or not isinstance(value.get("reason"), str)
+        or not value["reason"].strip()
+        or len(value["reason"]) > 8192
+        or isinstance(value.get("authorized_at_unix"), bool)
+        or not isinstance(value.get("authorized_at_unix"), (int, float))
+        or not 0 < value["authorized_at_unix"] <= time.time()
+    ):
+        raise ClaudeCoreError("owner restart authorization binding mismatch")
+
+
+def _assert_unused_restart_root(problem_dir: Path, root_session_id: str) -> None:
+    root_dir = problem_dir / "roots" / root_session_id
+    if root_dir.is_symlink() or not root_dir.is_dir():
+        raise ClaudeCoreError("restart transfer root directory is unsafe")
+    if any(
+        entry.name not in {"manifest.json", "owner_restart_transfer.json", "source_drift_fence.json"}
+        for entry in root_dir.iterdir()
+    ):
+        raise ClaudeCoreError("restart transfer requires an unused root with no admissions")
+    # Admission artifacts normally follow a root pointer. Refuse orphaned or
+    # malformed artifacts as well; absence of a pointer is not sufficient.
+    count = 0
+    for directory, directories, filenames in os.walk(problem_dir, followlinks=False):
+        count += len(directories) + len(filenames)
+        if count > 20_000:
+            raise ClaudeCoreError("restart transfer effect audit exceeds its bound")
+        for name in directories:
+            if (Path(directory) / name).is_symlink():
+                raise ClaudeCoreError("restart transfer effect audit found an unsafe directory")
+        for name in filenames:
+            if re.search(
+                r"(?:^|[_.-])(?:intent|request|dispatch|claim|worker|execution|executor|receipt|settlement|acceptance)\.json$",
+                name,
+            ) is None:
+                continue
+            value = _read_canonical_object(
+                Path(directory) / name, label="restart transfer admission artifact",
+                maximum_bytes=MAX_COUNCIL_REQUEST_BYTES,
+            )
+            pending: list[Any] = [value]
+            found_root = False
+            while pending:
+                item = pending.pop()
+                if isinstance(item, dict):
+                    if "root_session_id" in item:
+                        identity = item["root_session_id"]
+                        if not isinstance(identity, str) or SESSION_ID_RE.fullmatch(identity) is None:
+                            raise ClaudeCoreError("restart transfer admission root identity is invalid")
+                        found_root = True
+                        if identity == root_session_id:
+                            raise ClaudeCoreError("restart transfer root already has an admission")
+                    pending.extend(item.values())
+                elif isinstance(item, list):
+                    pending.extend(item)
+            if not found_root:
+                raise ClaudeCoreError("restart transfer admission artifact lacks a root identity")
+
+
+def _owner_restart_transfer_binding(
+    *, problem_id: str, statement_sha256: str, source_root_session_id: str,
+    abandoned_root_session_id: str, successor_root_session_id: str,
+    pointer: Mapping[str, Any], receipt: Mapping[str, Any], receipt_path: Path,
+) -> dict[str, Any]:
+    problem_dir = STATE_ROOT.joinpath(*problem_id.split("/"))
+    if len({source_root_session_id, abandoned_root_session_id, successor_root_session_id}) != 3:
+        raise ClaudeCoreError("restart transfer requires three distinct root sessions")
+    abandoned = _read_root_manifest_unlocked(
+        problem_dir=problem_dir, problem_id=problem_id,
+        statement_sha256=statement_sha256, root_session_id=abandoned_root_session_id,
+        require_current_source=False,
+    )
+    _require_council_root(abandoned)
+    if abandoned.get("previous_root_session_id") != source_root_session_id:
+        raise ClaudeCoreError("restart transfer requires the direct authorized successor")
+    _assert_unused_restart_root(problem_dir, abandoned_root_session_id)
+    active = _read_root_authority_unlocked(
+        problem_dir, problem_id=problem_id, statement_sha256=statement_sha256,
+        require_current_source=False,
+    )
+    if active is None or active["root_session_id"] not in {
+        abandoned_root_session_id, successor_root_session_id,
+    }:
+        raise ClaudeCoreError("restart transfer no longer owns the active root lineage")
+    active_manifest = abandoned
+    if active["root_session_id"] == successor_root_session_id:
+        active_manifest = _read_root_manifest_unlocked(
+            problem_dir=problem_dir, problem_id=problem_id,
+            statement_sha256=statement_sha256, root_session_id=successor_root_session_id,
+            require_current_source=True,
+        )
+        if active_manifest.get("previous_root_session_id") != abandoned_root_session_id:
+            raise ClaudeCoreError("restart transfer successor lineage mismatch")
+    _validate_historical_root_pair(active, active_manifest)
+    binding = _owner_council_restart_binding(
+        problem_id=problem_id, statement_sha256=statement_sha256,
+        root_session_id=source_root_session_id,
+        successor_root_session_id=successor_root_session_id,
+        pointer=pointer, receipt=receipt, receipt_path=receipt_path,
+    )
+    runtime_keys = ("host_source_sha256", "python_runtime_sha256", "root_launcher_sha256")
+    if all(abandoned.get(key) == binding[key] for key in runtime_keys):
+        raise ClaudeCoreError("restart transfer requires deployment source or runtime drift")
+    old_path = problem_dir / "roots" / source_root_session_id / "owner_restart_authorization.json"
+    old = _read_canonical_object(
+        old_path, label="original restart authorization", maximum_bytes=16_384,
+    )
+    historical_expected = {
+        **binding, "successor_root_session_id": abandoned_root_session_id,
+        **{key: abandoned[key] for key in runtime_keys},
+    }
+    _validate_owner_restart_record(old, historical_expected)
+    return {
+        **binding,
+        "schema_version": "rethlas_owner_restart_transfer_v1",
+        "status": "authorized_unused_restart_transfer",
+        "abandoned_root_session_id": abandoned_root_session_id,
+        "abandoned_manifest_sha256": sha256_file(
+            problem_dir / "roots" / abandoned_root_session_id / "manifest.json"
+        ),
+        "source_authorization_sha256": sha256_file(old_path),
+    }
+
+
+def transfer_council_restart(
+    *, problem_id: str, statement_sha256: str, root_session_id: str,
+    successor_root_session_id: str, expected_candidate_packet_sha256: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Owner-only, one-hop transfer of an unused authorization after drift."""
+    problem_id = _safe_problem_id(problem_id)
+    if _statement(problem_id)[2] != statement_sha256:
+        raise ClaudeCoreError("statement digest mismatch")
+    if (
+        SESSION_ID_RE.fullmatch(root_session_id) is None
+        or SESSION_ID_RE.fullmatch(successor_root_session_id) is None
+        or not _is_sha256(expected_candidate_packet_sha256)
+    ):
+        raise ClaudeCoreError("restart transfer binding is invalid")
+    reason = _bounded_text(reason, label="restart transfer reason", maximum=8192)
+    with _root_authority_lock(problem_id) as problem_dir:
+        active = _read_root_authority_unlocked(
+            problem_dir, problem_id=problem_id, statement_sha256=statement_sha256,
+            require_current_source=False,
+        )
+        if active is None or active["root_session_id"] != root_session_id:
+            raise ClaudeCoreError("restart transfer requires the exact active unused root")
+        successor_dir = problem_dir / "roots" / successor_root_session_id
+        if successor_dir.exists() or successor_dir.is_symlink():
+            raise ClaudeCoreError("restart transfer requires a fresh unused successor UUID")
+        manifest = _read_root_manifest_unlocked(
+            problem_dir=problem_dir, problem_id=problem_id,
+            statement_sha256=statement_sha256, root_session_id=root_session_id,
+            require_current_source=False,
+        )
+        source_root = manifest.get("previous_root_session_id")
+        if not isinstance(source_root, str) or SESSION_ID_RE.fullmatch(source_root) is None:
+            raise ClaudeCoreError("restart transfer requires an authorized predecessor")
+        source_manifest = _read_root_manifest_unlocked(
+            problem_dir=problem_dir, problem_id=problem_id,
+            statement_sha256=statement_sha256, root_session_id=source_root,
+            require_current_source=False,
+        )
+        pointer = _read_council_pointer(
+            _council_pointer_path(problem_id, source_root), problem_id=problem_id,
+            statement_sha256=statement_sha256, root_session_id=source_root,
+            require_current_source=False,
+            expected_host_source_sha256=source_manifest["host_source_sha256"],
+        )
+        if pointer["state"] != "consumed":
+            raise ClaudeCoreError("restart transfer requires a consumed source council")
+        _cohort, _seen, receipt, receipt_path = _settled_terminal_council_cohort(
+            problem_id=problem_id, statement_sha256=statement_sha256,
+            root_session_id=source_root, plan_sha256=str(pointer["final_plan_sha256"]),
+            initial_cohort_id=str(pointer["cohort_id"]),
+        )
+        expected = _owner_restart_transfer_binding(
+            problem_id=problem_id, statement_sha256=statement_sha256,
+            source_root_session_id=source_root, abandoned_root_session_id=root_session_id,
+            successor_root_session_id=successor_root_session_id,
+            pointer=pointer, receipt=receipt, receipt_path=receipt_path,
+        )
+        if expected["candidate_packet_sha256"] != expected_candidate_packet_sha256:
+            raise ClaudeCoreError("restart transfer candidate packet digest mismatch")
+        path = problem_dir / "roots" / root_session_id / "owner_restart_transfer.json"
+        fence_path = path.with_name("source_drift_fence.json")
+        existing_path = fence_path if fence_path.exists() or fence_path.is_symlink() else path
+        if existing_path.exists() or existing_path.is_symlink():
+            value = _read_canonical_object(existing_path, label="owner restart transfer", maximum_bytes=16_384)
+            _validate_owner_restart_record(value, expected)
+            if value["reason"] != reason:
+                raise ClaudeCoreError("restart transfer replay reason changed")
+        else:
+            value = {**expected, "reason": reason, "authorized_at_unix": time.time()}
+        # Fence first at the path checked by every historical root. Its new
+        # schema also makes old binaries fail closed. If publication stops
+        # between these two writes, replay recovers the exact record/time
+        # from the fence; it never reopens the abandoned authorization.
+        _write_once(fence_path, value, mode=0o400)
+        _write_once(path, value, mode=0o400)
+        return value
 
 
 def authorize_council_restart(
@@ -29337,6 +29610,18 @@ def main() -> None:
             )
         except (OSError, ClaudeCoreError, ValueError) as exc:
             print(f"Claude council restart authorization failed: {exc}", file=sys.stderr)
+            raise SystemExit(70) from exc
+        print(canonical_json(receipt))
+        return
+    if len(sys.argv) == 8 and sys.argv[1] == "--transfer-council-restart":
+        try:
+            receipt = transfer_council_restart(
+                problem_id=sys.argv[2], statement_sha256=sys.argv[3],
+                root_session_id=sys.argv[4], successor_root_session_id=sys.argv[5],
+                expected_candidate_packet_sha256=sys.argv[6], reason=sys.argv[7],
+            )
+        except (OSError, ClaudeCoreError, ValueError) as exc:
+            print(f"Claude council restart transfer failed: {exc}", file=sys.stderr)
             raise SystemExit(70) from exc
         print(canonical_json(receipt))
         return

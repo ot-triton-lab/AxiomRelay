@@ -39,6 +39,13 @@ CLAUDE_CORE_SOURCE="$ROOT_DIR/../claude_core.py"
 PYTHON_BIN="$ROOT_DIR/../.generation-venv/bin/python"
 OWNER_ADMIN_MODE=0
 case "${1:-}" in
+  --authorize-council-restart|--transfer-council-restart)
+    if [[ "$#" -ne 7 ]]; then
+      echo "Usage: $0 $1 PROBLEM_ID STATEMENT_SHA256 ROOT_SESSION_ID NEXT_ROOT_SESSION_ID CANDIDATE_PACKET_SHA256 REASON" >&2
+      exit 1
+    fi
+    OWNER_ADMIN_MODE=1
+    ;;
   --migrate-stale-route-council)
     if [[ "$#" -ne 6 || "$6" != --confirm-source-drift ]]; then
       echo "Usage: $0 --migrate-stale-route-council PROBLEM_ID STATEMENT_SHA256 ROOT_SESSION_ID REASON --confirm-source-drift" >&2
