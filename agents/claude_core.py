@@ -7698,6 +7698,15 @@ def prepare_root_manifest(
                     if (
                         terminal_receipt["status"] != "completed_unverified"
                         and not recovery_exhausted
+                        and not _owner_council_restart_authorized(
+                            problem_id=problem_id,
+                            statement_sha256=statement_sha256,
+                            root_session_id=str(active["root_session_id"]),
+                            successor_root_session_id=root_session_id,
+                            pointer=predecessor_pointer,
+                            receipt=terminal_receipt,
+                            receipt_path=_terminal_receipt_path,
+                        )
                     ):
                         raise ClaudeCoreError(
                             "cannot take over a consumed council before its "
@@ -15026,6 +15035,16 @@ def start_route_council(
                 if (
                     prior_receipt["status"] != "completed_unverified"
                     and not recovery_exhausted
+                    and not _owner_council_restart_authorized(
+                        problem_id=problem_id,
+                        statement_sha256=statement_sha256,
+                        root_session_id=predecessor_root_session_id,
+                        successor_root_session_id=root_session_id,
+                        pointer=previous,
+                        receipt=prior_receipt,
+                        receipt_path=receipt_path,
+                        expected_candidate_packet_sha256=candidate_packet_sha256,
+                    )
                 ):
                     raise ClaudeCoreError(
                         "a new council requires a completed unverified or "
@@ -18588,6 +18607,230 @@ def _settled_terminal_council_cohort(
             "the terminal council cohort has not safely settled"
         )
     return terminal_cohort_id, seen_cohorts, receipt, receipt_path
+
+
+def _owner_council_restart_binding(
+    *,
+    problem_id: str,
+    statement_sha256: str,
+    root_session_id: str,
+    successor_root_session_id: str,
+    pointer: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+    receipt_path: Path,
+) -> dict[str, Any]:
+    """Bind an explicit new-input restart; never reinterpret failed work."""
+
+    if (
+        SESSION_ID_RE.fullmatch(successor_root_session_id) is None
+        or successor_root_session_id == root_session_id
+        or pointer.get("state") != "consumed"
+        or receipt.get("status") != "failed"
+        or receipt.get("frontier_changed") is not True
+        or receipt.get("retry_allowed") is not False
+    ):
+        raise ClaudeCoreError(
+            "owner council restart requires a fresh root and a settled, "
+            "non-retryable failed cohort with a changed frontier"
+        )
+    _assert_no_unsettled_publication_finalization(
+        problem_id=problem_id, statement_sha256=statement_sha256,
+    )
+    if _existing_publication(problem_id, statement_sha256) is not None:
+        raise ClaudeCoreError("publication is terminal; owner restart is closed")
+    _assert_no_unsettled_cohort_execution(
+        problem_id=problem_id, statement_sha256=statement_sha256,
+    )
+    state_dir = receipt_path.parent
+    descriptor = os.open(
+        state_dir / "cohort.lock",
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600,
+    )
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ClaudeCoreError("owner restart cohort lock is unsafe")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ClaudeCoreError("owner restart cohort is still active") from exc
+        council_dir = _council_dir(problem_id, str(pointer["council_id"]))
+        with _council_quiescence_guard(council_dir):
+            old_packet_path = council_dir / "reference_candidate_packet.json"
+            old_packet = _read_canonical_object(
+                old_packet_path, label="restart predecessor candidate packet",
+                maximum_bytes=MAX_COUNCIL_REQUEST_BYTES,
+            )
+            packet = reference_candidate_packet(
+                problem_id=problem_id, statement_sha256=statement_sha256,
+            )
+            old_candidates = old_packet.get("candidates")
+            if (
+                old_packet.get("schema_version") != REFERENCE_CANDIDATE_PACKET_SCHEMA
+                or old_packet.get("problem_id") != problem_id
+                or old_packet.get("statement_sha256") != statement_sha256
+                or not isinstance(old_candidates, list)
+                or len(packet["candidates"]) <= len(old_candidates)
+                or any(item not in packet["candidates"] for item in old_candidates)
+            ):
+                raise ClaudeCoreError(
+                    "owner restart requires new candidates while preserving "
+                    "every predecessor candidate unchanged"
+                )
+            frontier_sha256 = _frontier(problem_id).get("frontier_sha256")
+            if (
+                not _is_sha256(frontier_sha256)
+                or frontier_sha256 != receipt.get("frontier_after_sha256")
+            ):
+                raise ClaudeCoreError("owner restart frontier differs from settled work")
+            python_sha256 = globals().get("_RETHLAS_PINNED_PYTHON_SHA256")
+            launcher_sha256 = os.environ.get("RETHLAS_CLAUDE_ROOT_LAUNCHER_SHA256")
+            _require_root_execution_epoch(
+                python_runtime_sha256=python_sha256,
+                root_launcher_sha256=launcher_sha256,
+            )
+            root_dir = STATE_ROOT.joinpath(*problem_id.split("/"), "roots", root_session_id)
+            return {
+                "schema_version": "rethlas_owner_council_restart_v1",
+                "status": "authorized_new_input_restart",
+                "problem_id": problem_id,
+                "statement_sha256": statement_sha256,
+                "root_session_id": root_session_id,
+                "successor_root_session_id": successor_root_session_id,
+                "source_manifest_sha256": sha256_file(root_dir / "manifest.json"),
+                "source_pointer_sha256": sha256_file(root_dir / "route_council.json"),
+                "source_cohort_id": receipt["cohort_id"],
+                "source_receipt_sha256": sha256_file(receipt_path),
+                "source_candidate_packet_sha256": sha256_file(old_packet_path),
+                "candidate_packet_sha256": _reference_candidate_packet_sha256(packet),
+                "frontier_sha256": frontier_sha256,
+                "host_source_sha256": _require_loaded_host_source_current(),
+                "python_runtime_sha256": python_sha256,
+                "root_launcher_sha256": launcher_sha256,
+            }
+    finally:
+        with suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _owner_council_restart_authorized(
+    *,
+    problem_id: str,
+    statement_sha256: str,
+    root_session_id: str,
+    successor_root_session_id: str,
+    pointer: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+    receipt_path: Path,
+    expected_candidate_packet_sha256: str | None = None,
+) -> bool:
+    path = STATE_ROOT.joinpath(
+        *problem_id.split("/"), "roots", root_session_id,
+        "owner_restart_authorization.json",
+    )
+    if not (path.exists() or path.is_symlink()):
+        return False
+    value = _read_canonical_object(
+        path, label="owner council restart authorization", maximum_bytes=16_384,
+    )
+    expected = _owner_council_restart_binding(
+        problem_id=problem_id, statement_sha256=statement_sha256,
+        root_session_id=root_session_id,
+        successor_root_session_id=successor_root_session_id,
+        pointer=pointer, receipt=receipt, receipt_path=receipt_path,
+    )
+    if (
+        set(value) != set(expected) | {"reason", "authorized_at_unix"}
+        or any(value.get(key) != item for key, item in expected.items())
+        or (
+            expected_candidate_packet_sha256 is not None
+            and expected["candidate_packet_sha256"] != expected_candidate_packet_sha256
+        )
+        or not isinstance(value.get("reason"), str)
+        or not value["reason"].strip()
+        or len(value["reason"]) > 8192
+        or isinstance(value.get("authorized_at_unix"), bool)
+        or not isinstance(value.get("authorized_at_unix"), (int, float))
+        or not 0 < value["authorized_at_unix"] <= time.time()
+    ):
+        raise ClaudeCoreError("owner council restart authorization binding mismatch")
+    return True
+
+
+def authorize_council_restart(
+    *,
+    problem_id: str,
+    statement_sha256: str,
+    root_session_id: str,
+    successor_root_session_id: str,
+    expected_candidate_packet_sha256: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Owner CLI only: authorize one fresh epoch for genuinely new input."""
+
+    problem_id = _safe_problem_id(problem_id)
+    if _statement(problem_id)[2] != statement_sha256:
+        raise ClaudeCoreError("statement digest mismatch")
+    if (
+        SESSION_ID_RE.fullmatch(root_session_id) is None
+        or SESSION_ID_RE.fullmatch(successor_root_session_id) is None
+        or not _is_sha256(expected_candidate_packet_sha256)
+    ):
+        raise ClaudeCoreError("owner council restart binding is invalid")
+    reason = _bounded_text(reason, label="owner council restart reason", maximum=8192)
+    with _root_authority_lock(problem_id) as problem_dir:
+        active = _read_root_authority_unlocked(
+            problem_dir, problem_id=problem_id, statement_sha256=statement_sha256,
+            require_current_source=False,
+        )
+        if active is None or active["root_session_id"] != root_session_id:
+            raise ClaudeCoreError("owner restart requires the exact active historical root")
+        manifest = _read_root_manifest_unlocked(
+            problem_dir=problem_dir, problem_id=problem_id,
+            statement_sha256=statement_sha256, root_session_id=root_session_id,
+            require_current_source=False,
+        )
+        _validate_historical_root_pair(active, manifest)
+        _require_council_root(manifest)
+        pointer = _read_council_pointer(
+            _council_pointer_path(problem_id, root_session_id),
+            problem_id=problem_id, statement_sha256=statement_sha256,
+            root_session_id=root_session_id, require_current_source=False,
+            expected_host_source_sha256=manifest["host_source_sha256"],
+        )
+        if pointer["state"] != "consumed":
+            raise ClaudeCoreError("owner restart requires a consumed council")
+        _cohort_id, _seen, receipt, receipt_path = _settled_terminal_council_cohort(
+            problem_id=problem_id, statement_sha256=statement_sha256,
+            root_session_id=root_session_id, plan_sha256=str(pointer["final_plan_sha256"]),
+            initial_cohort_id=str(pointer["cohort_id"]),
+        )
+        binding = _owner_council_restart_binding(
+            problem_id=problem_id, statement_sha256=statement_sha256,
+            root_session_id=root_session_id,
+            successor_root_session_id=successor_root_session_id,
+            pointer=pointer, receipt=receipt, receipt_path=receipt_path,
+        )
+        if binding["candidate_packet_sha256"] != expected_candidate_packet_sha256:
+            raise ClaudeCoreError("owner restart candidate packet digest mismatch")
+        path = problem_dir / "roots" / root_session_id / "owner_restart_authorization.json"
+        if path.exists() or path.is_symlink():
+            _owner_council_restart_authorized(
+                problem_id=problem_id, statement_sha256=statement_sha256,
+                root_session_id=root_session_id,
+                successor_root_session_id=successor_root_session_id,
+                pointer=pointer, receipt=receipt, receipt_path=receipt_path,
+            )
+            value = _read_canonical_object(
+                path, label="owner council restart authorization", maximum_bytes=16_384,
+            )
+            if value["reason"] != reason:
+                raise ClaudeCoreError("owner restart replay reason changed")
+            return value
+        value = {**binding, "reason": reason, "authorized_at_unix": time.time()}
+        _write_once(path, value, mode=0o400)
+        return value
 
 
 def migrate_legacy_cohort_intent(
@@ -29082,6 +29325,18 @@ def main() -> None:
             )
         except (OSError, ClaudeCoreError, ValueError) as exc:
             print(f"Claude source-drift migration failed: {exc}", file=sys.stderr)
+            raise SystemExit(70) from exc
+        print(canonical_json(receipt))
+        return
+    if len(sys.argv) == 8 and sys.argv[1] == "--authorize-council-restart":
+        try:
+            receipt = authorize_council_restart(
+                problem_id=sys.argv[2], statement_sha256=sys.argv[3],
+                root_session_id=sys.argv[4], successor_root_session_id=sys.argv[5],
+                expected_candidate_packet_sha256=sys.argv[6], reason=sys.argv[7],
+            )
+        except (OSError, ClaudeCoreError, ValueError) as exc:
+            print(f"Claude council restart authorization failed: {exc}", file=sys.stderr)
             raise SystemExit(70) from exc
         print(canonical_json(receipt))
         return

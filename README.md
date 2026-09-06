@@ -569,6 +569,18 @@ takeover, using `AXIOM_RELAY_CLAUDE_OWNER_PROMPT`. It is treated as operator
 direction, not as a mathematical premise or publication authority. A wholly
 new root without either binding still rejects this setting.
 
+If a settled council cohort failed after changing the research frontier,
+ordinary runtime recovery may be unavailable. After ingesting a genuinely new
+candidate, owner tooling can use `claude_core.py --authorize-council-restart
+PROBLEM_ID STATEMENT_SHA256 OLD_ROOT_UUID NEW_ROOT_UUID CANDIDATE_PACKET_SHA256
+REASON` in the launcher's pinned Python and source environment. This records
+permission for exactly that fresh root and candidate packet. It requires all
+old work to be settled, retains every old candidate and the failed receipt,
+and rejects changed inputs, frontier, or execution bindings. Then launch with
+the matching takeover and session UUIDs. The new root must complete a fresh
+route council and normal proof verification; this owner operation is not
+available to research agents through MCP.
+
 ## Configuration
 
 | Setting | Meaning |
