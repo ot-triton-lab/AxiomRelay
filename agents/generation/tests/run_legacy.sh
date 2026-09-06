@@ -2282,7 +2282,7 @@ then
   exit 1
 fi
 verifier_is_ready() {
-  curl -sf --connect-timeout 2 --max-time 5 \
+  curl -sf --connect-timeout 2 --max-time 30 \
     "$VERIFY_READY_URL" >/dev/null 2>&1
 }
 if ! verifier_is_ready; then
